@@ -1,0 +1,69 @@
+name: Deploy to Devvit
+
+# Deploys (uploads) a new app version to Devvit. The local/sandboxed dev
+# container cannot reach *.reddit.com (blocked by egress policy), so deployment
+# runs here on GitHub-hosted runners, which have unrestricted network access.
+#
+# Auth: the Devvit CLI reads the DEVVIT_AUTH_TOKEN env var natively (the exact
+# contents of a local ~/.devvit/token). Store it as a repository secret named
+# DEVVIT_AUTH_TOKEN — see the note at the bottom of this file.
+
+on:
+  # On-demand "deploy button" from the Actions tab.
+  workflow_dispatch:
+  # Auto-deploy when the default branch advances. Remove this block if you
+  # prefer deploys to be manual-only.
+  push:
+    branches: [main]
+
+# Never let two deploys run at once; let an in-flight deploy finish.
+concurrency:
+  group: devvit-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run type-check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Upload to Devvit
+        env:
+          # The Devvit CLI picks this up automatically (no `devvit login` needed).
+          DEVVIT_AUTH_TOKEN: ${{ secrets.DEVVIT_AUTH_TOKEN }}
+          # Skip the CLI's interactive metrics prompt in CI.
+          DEVVIT_DISABLE_METRICS: "1"
+        # --just-do-it: non-interactive; auto-bumps the patch version.
+        run: npx --no-install devvit upload --just-do-it
+
+# ─────────────────────────────────────────────────────────────────────────────
+# One-time setup: add the DEVVIT_AUTH_TOKEN repository secret.
+#
+#   Settings → Secrets and variables → Actions → New repository secret
+#     Name:  DEVVIT_AUTH_TOKEN
+#     Value: the single-line JSON from your local ~/.devvit/token
+#            (run `devvit login` locally first, then `cat ~/.devvit/token`)
+#
+# Or with the gh CLI from a machine that has the token:
+#   gh secret set DEVVIT_AUTH_TOKEN < ~/.devvit/token
+#
+# This does NOT publish the app publicly. Promoting a version (review
+# submission) is `devvit publish`, which is interactive and intentionally left
+# as a manual step.
+# ─────────────────────────────────────────────────────────────────────────────
