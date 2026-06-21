@@ -195,9 +195,22 @@ function jewel(scene: Scene, key: string, radius: number, sides: number) {
   register(scene, key, dc, nc);
 }
 
+// Hollow ring (annulus) for shockwave/nova effects — additive, no normal map.
+function ring(scene: Scene, key: string, radius: number, thickness: number) {
+  const D = radius * 2;
+  const { canvas, ctx } = makeCanvas(D);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = thickness;
+  ctx.beginPath();
+  ctx.arc(radius, radius, radius - thickness, 0, Math.PI * 2);
+  ctx.stroke();
+  register(scene, key, canvas);
+}
+
 /** Generate every texture the template uses. Call once in Boot. */
 export function createTextures(scene: Scene) {
   jewel(scene, 'jewel', 22, 8);
+  ring(scene, 'ring', 28, 5);
   sphere(scene, 'ball', 24);
   sphere(scene, 'dot', 10);
   roundedBox(scene, 'box', 40, 8, 8);

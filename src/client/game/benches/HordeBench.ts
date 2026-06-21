@@ -3,7 +3,8 @@ import type { GameObjects, Physics } from 'phaser';
 import { BenchScene } from './BenchScene';
 import { addGradientBackground } from '../lib/look';
 import { ensureRetroFont, RETRO_FONT_KEY } from '../lib/retroFont';
-import { type Upgrade, type UpgradeTarget, pickUpgrades } from '../upgrades';
+import { type Upgrade, type ApplyHost, type GameState, buildChoices } from '../upgrades';
+import { type Weapon, type WeaponHost, createWeapon } from '../weapons';
 
 // Floating damage numbers tween from white to gold as they rise.
 const DMG_WHITE = new Phaser.Display.Color(255, 255, 255);
@@ -30,14 +31,16 @@ const MAX_JEWEL_LIGHTS = 16; // cap real lights; extra jewels still glow (lit sp
 
 type Jewel = { sprite: GameObjects.Image; light: GameObjects.Light | null };
 
-export class HordeBench extends BenchScene implements UpgradeTarget {
+export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, GameState {
   protected readonly benchId = 'horde';
 
-  private player!: GameObjects.Image;
+  // Public for the weapon system (WeaponHost).
+  player!: GameObjects.Image;
+  enemies!: Physics.Arcade.Group;
+  hitBurst!: GameObjects.Particles.ParticleEmitter;
+
   private playerLight!: GameObjects.PointLight;
   private mouseLight!: GameObjects.Light;
-  private enemies!: Physics.Arcade.Group;
-  private bolts!: Physics.Arcade.Group;
   private gems: Jewel[] = [];
   private jewelLights = 0;
 
@@ -51,17 +54,19 @@ export class HordeBench extends BenchScene implements UpgradeTarget {
   boltSpeed = 540;
   burstCount = 14;
 
+  // Weapons + synergies
+  private weapons: Weapon[] = [];
+  private synergies = new Set<string>();
+
   // Leveling
   private xp = 0;
   private level = 1;
   private xpToNext = 4;
   private leveling = false;
-  private fireTimer = 0;
+  private slowScale = 1;
   private xpBar?: GameObjects.Graphics;
   private levelText?: GameObjects.Text;
 
-  private hitBurst!: GameObjects.Particles.ParticleEmitter;
-  private trail!: GameObjects.Particles.ParticleEmitter;
   private aura!: GameObjects.Particles.ParticleEmitter;
 
   constructor() {
@@ -113,18 +118,6 @@ export class HordeBench extends BenchScene implements UpgradeTarget {
       .setDepth(6);
     this.aura.startFollow(this.player);
 
-    // Additive bolt trails (shared pooled emitter, fed per frame).
-    this.trail = this.add
-      .particles(0, 0, 'glow', {
-        lifespan: 240,
-        scale: { start: 0.16, end: 0 },
-        alpha: { start: 0.7, end: 0 },
-        tint: 0xffee88,
-        blendMode: 'ADD',
-        emitting: false,
-      })
-      .setDepth(15);
-
     // Fiery impact burst.
     this.hitBurst = this.add
       .particles(0, 0, 'glow', {
@@ -139,28 +132,18 @@ export class HordeBench extends BenchScene implements UpgradeTarget {
       .setDepth(22);
 
     this.enemies = this.physics.add.group();
-    this.bolts = this.physics.add.group();
 
-    // Physics decides what got hit: any bolt overlapping any spider.
-    this.physics.add.overlap(this.bolts, this.enemies, (boltObj, enemyObj) => {
-      const e = enemyObj as ArcadeImage;
-      const b = boltObj as ArcadeImage;
-      if (!e.active || !b.active) return;
-      this.hitBurst.explode(this.burstCount, e.x, e.y);
-      const crit = Math.random() < this.critChance;
-      this.spawnDamageText(e.x, e.y, crit ? this.damage * 3 : this.damage, crit);
-      if (Math.random() < this.jewelChance) this.spawnJewel(e.x, e.y);
-      e.destroy();
-      b.destroy();
-    });
+    // Weapons: start with the Plasma Bolt; upgrades add/level more.
+    this.weapons = [];
+    this.synergies.clear();
+    this.addOrLevelWeapon('bolt');
+    this.setSlow(1);
 
-    // Leveling state + XP bar (bolts now fire from a manual accumulator in
-    // onUpdate so upgrades can change the cooldown live).
+    // Leveling state + XP bar.
     this.xp = 0;
     this.level = 1;
     this.xpToNext = 4;
     this.leveling = false;
-    this.fireTimer = 0;
     this.xpBar = this.add.graphics().setScrollFactor(0).setDepth(40);
     this.levelText = this.add
       .text(width / 2, 12, 'LV 1', { fontFamily: 'Arial Black', fontSize: 16, color: '#ffd166' })
@@ -188,37 +171,45 @@ export class HordeBench extends BenchScene implements UpgradeTarget {
     }
   }
 
-  private fire() {
-    const kids = this.enemies.getChildren() as ArcadeImage[];
-    if (kids.length === 0) return;
-    const px = this.player.x;
-    const py = this.player.y;
+  // Resolve a hit on a spider (WeaponHost): burst, damage number, jewel, kill.
+  hitEnemy(e: ArcadeImage) {
+    if (!e.active) return;
+    this.hitBurst.explode(this.burstCount, e.x, e.y);
+    const crit = Math.random() < this.critChance;
+    this.spawnDamageText(e.x, e.y, crit ? this.damage * 3 : this.damage, crit);
+    if (Math.random() < this.jewelChance) this.spawnJewel(e.x, e.y);
+    e.destroy();
+  }
 
-    // Fire `projectiles` straight bolts: the first aims at the nearest spider,
-    // extras spread to random ones. Physics `overlap` resolves the hits.
-    for (let n = 0; n < this.projectiles; n++) {
-      if (this.bolts.getLength() >= this.maxBolts) break;
-      let target = kids[0]!;
-      if (n === 0) {
-        let best = Infinity;
-        for (const e of kids) {
-          const dd = (e.x - px) * (e.x - px) + (e.y - py) * (e.y - py);
-          if (dd < best) {
-            best = dd;
-            target = e;
-          }
-        }
-      } else {
-        target = kids[Phaser.Math.Between(0, kids.length - 1)]!;
-      }
-      const b = this.bolts.create(px, py, 'glow') as ArcadeImage;
-      b.setTint(0xffee66).setScale(0.4).setBlendMode(Phaser.BlendModes.ADD).setDepth(16);
-      this.physics.moveToObject(b, target, this.boltSpeed);
-      this.time.delayedCall(1300, () => {
-        if (b.active) b.destroy();
-      });
-    }
-    this.hitBurst.explode(4, px, py); // muzzle flash
+  // Bullet-time: slow the sim instead of pausing (Arcade timeScale is inverse;
+  // tween/time scales are direct). `s` in (0,1], 1 = normal.
+  private setSlow(s: number) {
+    this.slowScale = s;
+    this.physics.world.timeScale = 1 / s;
+    this.tweens.timeScale = s;
+    this.time.timeScale = s;
+  }
+
+  // ── ApplyHost / GameState (used by the upgrade cards) ──
+  addOrLevelWeapon(id: string) {
+    const existing = this.weapons.find((w) => w.id === id);
+    if (existing) existing.levelUp();
+    else this.weapons.push(createWeapon(id, this));
+  }
+  setSynergy(id: string) {
+    this.synergies.add(id);
+  }
+  ownsWeapon(id: string) {
+    return this.weapons.some((w) => w.id === id);
+  }
+  weaponLevel(id: string) {
+    return this.weapons.find((w) => w.id === id)?.level ?? 0;
+  }
+  weaponCount() {
+    return this.weapons.length;
+  }
+  hasSynergy(id: string) {
+    return this.synergies.has(id);
   }
 
   private gainXp(n: number) {
@@ -227,21 +218,21 @@ export class HordeBench extends BenchScene implements UpgradeTarget {
     this.xp += n;
   }
 
-  // Pause the game and present the Balatro-style upgrade cards. On pick, apply
-  // the upgrade and resume (chaining if another level is already due).
+  // Slow the game to bullet-time (not paused) and show the upgrade cards at the
+  // bottom. On pick, apply, restore speed; onUpdate picks up any further level.
   private levelUp() {
     this.leveling = true;
     this.xp -= this.xpToNext;
     this.level += 1;
     this.xpToNext = Math.ceil(this.xpToNext * 1.4) + 2;
     this.cameras.main.flash(160, 255, 240, 180);
-    this.scene.pause();
+    this.setSlow(0.3);
     this.scene.launch('CardSelect', {
-      choices: pickUpgrades(3),
+      choices: buildChoices(3, this),
       onPick: (u: Upgrade) => {
         u.apply(this);
+        this.setSlow(1);
         this.leveling = false;
-        this.scene.resume(); // a further pending level-up is picked up by onUpdate
       },
     });
   }
@@ -304,20 +295,18 @@ export class HordeBench extends BenchScene implements UpgradeTarget {
   }
 
   protected override onUpdate(delta: number) {
-    const dt = delta / 1000;
+    const dt = (delta / 1000) * this.slowScale;
     const px = this.player.x;
     const py = this.player.y;
 
-    // Auto-fire on a manual accumulator so upgrades can change the cooldown live.
-    // Trigger a pending level-up here (only runs while the game isn't paused),
-    // so the card scene is always fully torn down before the next one launches.
+    // Trigger a pending level-up (runs each frame; `leveling` guards re-entry) so
+    // the card scene fully tears down before the next one launches.
     if (!this.leveling && this.xp >= this.xpToNext) this.levelUp();
 
-    this.fireTimer += delta;
-    if (this.fireTimer >= this.fireDelayMs) {
-      this.fireTimer = 0;
-      this.fire();
-    }
+    // Update all weapons; bullet-time scales their firing cadence.
+    const wdelta = delta * this.slowScale;
+    for (const w of this.weapons) w.update(wdelta);
+
     this.redrawXpBar();
 
     // Mouse-follow light (in world space).
@@ -341,11 +330,6 @@ export class HordeBench extends BenchScene implements UpgradeTarget {
         e.setVelocity((-dy / d) * sp * 0.9, (dx / d) * sp * 0.9);
       }
       e.rotation = Math.atan2(dy, dx) - Math.PI / 2;
-    }
-
-    // Bolt trails.
-    for (const b of this.bolts.getChildren() as ArcadeImage[]) {
-      this.trail.emitParticleAt(b.x, b.y, 1);
     }
 
     // XP jewels drift to the player (their light rides along), spinning so the
@@ -379,6 +363,8 @@ export class HordeBench extends BenchScene implements UpgradeTarget {
 
   override shutdown() {
     super.shutdown();
+    for (const w of this.weapons) w.destroy();
+    this.weapons = [];
     for (const g of this.gems) {
       if (g.light) this.lights.removeLight(g.light);
     }

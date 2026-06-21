@@ -3,11 +3,11 @@ import { Scene, GameObjects } from 'phaser';
 import { type Upgrade, RARITY_COLOR, RARITY_EDITION } from '../upgrades';
 import { SWIRL_FRAG, EDITION_FRAG } from '../lib/cardShaders';
 
-// The paused level-up overlay. Renders a Balatro-style swirl background and a row
-// of upgrade cards with: rarity edition shaders (foil/holo/polychrome), an idle
-// sway, a fake-3D tilt toward the cursor (with the edition highlight tracking the
-// tilt), spring-in on draw, and a sparkle + pop on pick. Launched over the paused
-// game; calls back `onPick` with the chosen upgrade, then stops itself.
+// The level-up overlay. The game keeps running underneath in bullet-time (not
+// paused); this draws a swirl-backed card tray along the BOTTOM of the screen,
+// sized responsively so it fits phones. Cards have rarity edition shaders
+// (foil/holo/polychrome), an idle sway, a fake-3D tilt toward the cursor, a
+// spring-in on draw, and a sparkle + pop on pick. Calls back onPick, then stops.
 type CardSelectData = { choices: Upgrade[]; onPick: (u: Upgrade) => void };
 
 type Card = {
@@ -16,13 +16,15 @@ type Card = {
   edition: GameObjects.Shader | null;
   baseX: number;
   baseY: number;
+  scale: number;
   phase: number;
   hover: number;
+  ready: boolean;
   wasOver: boolean;
 };
 
-const CARD_W = 190;
-const CARD_H = 270;
+const CARD_W = 188;
+const CARD_H = 240;
 
 export class CardSelect extends Scene {
   private payload!: CardSelectData;
@@ -43,36 +45,49 @@ export class CardSelect extends Scene {
 
   create() {
     const { width, height } = this.scale;
+    const n = this.payload.choices.length;
 
-    // Swirl background + a dim veil so the cards pop.
+    // Responsive bottom tray: scale cards so `n` fit the width and the tray height.
+    const bandH = Math.min(height * 0.46, CARD_H + 64);
+    const cardScale = Math.min(
+      1,
+      ((width * 0.94) / n - 14) / CARD_W,
+      (bandH - 34) / CARD_H
+    );
+    const bandTop = height - bandH;
+    const cy = height - 8 - (CARD_H * cardScale) / 2;
+    const gap = (width * 0.94) / n;
+    const startX = width / 2 - (gap * (n - 1)) / 2;
+
+    // Full-screen swirl shader behind the whole level-up screen. It outputs a
+    // sub-1 alpha so the slowed game keeps showing through — showcasing the
+    // shader across the background while you choose.
     this.bg = this.add
       .shader(
-        { name: 'card-swirl', fragmentSource: SWIRL_FRAG, initialUniforms: { uTime: 0, uResolution: [width, height] } },
+        {
+          name: 'card-swirl',
+          fragmentSource: SWIRL_FRAG,
+          initialUniforms: { uTime: 0, uResolution: [width, height], uAlpha: 0.55 },
+        },
         width / 2,
         height / 2,
         width,
         height
       )
       .setDepth(-10);
-    this.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.4).setDepth(-9);
+    // Darker panel just behind the card tray so the cards stay readable.
+    this.add.rectangle(width / 2, bandTop + bandH / 2, width, bandH, 0x000000, 0.45).setDepth(-9);
+    this.add.rectangle(width / 2, bandTop, width, 2, 0xffd166, 0.6).setDepth(-9);
 
     this.add
-      .text(width / 2, height * 0.16, 'LEVEL UP', {
+      .text(width / 2, bandTop + 8, 'LEVEL UP — choose an upgrade', {
         fontFamily: 'Arial Black',
-        fontSize: 44,
+        fontSize: 18,
         color: '#ffd166',
         stroke: '#000',
-        strokeThickness: 8,
+        strokeThickness: 4,
       })
-      .setOrigin(0.5)
-      .setDepth(20);
-    this.add
-      .text(width / 2, height * 0.16 + 42, 'choose an upgrade', {
-        fontFamily: 'Arial',
-        fontSize: 18,
-        color: '#ffffff',
-      })
-      .setOrigin(0.5)
+      .setOrigin(0.5, 0)
       .setDepth(20);
 
     this.sparkle = this.add
@@ -86,39 +101,33 @@ export class CardSelect extends Scene {
       })
       .setDepth(30);
 
-    const n = this.payload.choices.length;
-    const gap = Math.min(CARD_W + 30, (width * 0.92) / n);
-    const startX = width / 2 - (gap * (n - 1)) / 2;
-    const cy = height * 0.56;
-
     this.payload.choices.forEach((up, i) => {
       const x = startX + gap * i;
-      const card = this.buildCard(up, x, cy);
+      const card = this.buildCard(up, x, cy, cardScale);
       this.cards.push(card);
-      // spring-in, staggered
-      card.root.setScale(0.6).setAlpha(0).setY(cy + 70);
+      // spring-in, staggered (update() leaves the card alone until `ready`)
+      card.root.setScale(cardScale * 0.6).setAlpha(0).setY(cy + 70);
       this.tweens.add({
         targets: card.root,
-        scale: 1,
+        scale: cardScale,
         alpha: 1,
         y: cy,
         ease: 'Back.easeOut',
-        duration: 460,
-        delay: 90 * i,
+        duration: 440,
+        delay: 80 * i,
+        onComplete: () => (card.ready = true),
       });
     });
   }
 
-  private buildCard(up: Upgrade, x: number, y: number): Card {
+  private buildCard(up: Upgrade, x: number, y: number, cardScale: number): Card {
     const color = RARITY_COLOR[up.rarity];
     const root = this.add.container(x, y).setDepth(1);
 
-    // soft shadow
     const shadow = this.add.graphics();
     shadow.fillStyle(0x000000, 0.45);
-    shadow.fillRoundedRect(-CARD_W / 2 + 6, -CARD_H / 2 + 16, CARD_W, CARD_H, 14);
+    shadow.fillRoundedRect(-CARD_W / 2 + 6, -CARD_H / 2 + 14, CARD_W, CARD_H, 14);
 
-    // rarity glow behind the panel (rare+)
     const extras: GameObjects.GameObject[] = [];
     if (up.rarity !== 'common') {
       const glow = this.add
@@ -131,7 +140,6 @@ export class CardSelect extends Scene {
       extras.push(glow);
     }
 
-    // panel
     const panel = this.add.graphics();
     panel.fillStyle(0x141018, 0.96);
     panel.fillRoundedRect(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H, 12);
@@ -139,25 +147,25 @@ export class CardSelect extends Scene {
     panel.strokeRoundedRect(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H, 12);
 
     const rarityLabel = this.add
-      .text(0, -CARD_H / 2 + 16, up.rarity.toUpperCase(), {
+      .text(0, -CARD_H / 2 + 14, up.rarity.toUpperCase(), {
         fontFamily: 'Arial Black',
         fontSize: 12,
         color: Phaser.Display.Color.IntegerToColor(color).rgba,
       })
       .setOrigin(0.5);
 
-    const icon = this.add.image(0, -CARD_H * 0.2, up.icon.tex).setTint(up.icon.tint).setScale(1.6);
+    const icon = this.add.image(0, -CARD_H * 0.22, up.icon.tex).setTint(up.icon.tint).setScale(1.5);
     const iconGlow = this.add
-      .image(0, -CARD_H * 0.2, 'glow')
+      .image(0, -CARD_H * 0.22, 'glow')
       .setTint(up.icon.tint)
       .setBlendMode(Phaser.BlendModes.ADD)
-      .setScale(1.2)
+      .setScale(1.1)
       .setAlpha(0.6);
 
     const name = this.add
-      .text(0, CARD_H * 0.06, up.name, {
+      .text(0, CARD_H * 0.04, up.name, {
         fontFamily: 'Arial Black',
-        fontSize: 19,
+        fontSize: 18,
         color: '#ffffff',
         align: 'center',
         wordWrap: { width: CARD_W - 24 },
@@ -167,7 +175,7 @@ export class CardSelect extends Scene {
     const desc = this.add
       .text(0, CARD_H * 0.24, up.desc, {
         fontFamily: 'Arial',
-        fontSize: 15,
+        fontSize: 14,
         color: '#cfd6e0',
         align: 'center',
         wordWrap: { width: CARD_W - 28 },
@@ -176,7 +184,6 @@ export class CardSelect extends Scene {
 
     root.add([shadow, ...extras, panel, iconGlow, icon, rarityLabel, name, desc]);
 
-    // edition shimmer (rare+), an additive shader quad synced to the card.
     let edition: GameObjects.Shader | null = null;
     const mode = RARITY_EDITION[up.rarity];
     if (mode >= 0) {
@@ -200,7 +207,18 @@ export class CardSelect extends Scene {
       new Phaser.Geom.Rectangle(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H),
       Phaser.Geom.Rectangle.Contains
     );
-    const card: Card = { upgrade: up, root, edition, baseX: x, baseY: y, phase: Math.random() * 6.28, hover: 0, wasOver: false };
+    const card: Card = {
+      upgrade: up,
+      root,
+      edition,
+      baseX: x,
+      baseY: y,
+      scale: cardScale,
+      phase: Math.random() * 6.28,
+      hover: 0,
+      ready: false,
+      wasOver: false,
+    };
     root.on('pointerdown', () => this.pick(card));
     return card;
   }
@@ -210,9 +228,9 @@ export class CardSelect extends Scene {
     this.picked = true;
     this.sparkle.explode(28, card.baseX, card.baseY);
     this.cameras.main.flash(180, 255, 230, 180);
-    this.tweens.add({ targets: card.root, scale: 1.25, duration: 160, ease: 'Quad.easeOut' });
+    this.tweens.add({ targets: card.root, scale: card.scale * 1.25, duration: 160, ease: 'Quad.easeOut' });
     for (const c of this.cards) {
-      if (c !== card) this.tweens.add({ targets: c.root, alpha: 0.15, scale: 0.9, duration: 160 });
+      if (c !== card) this.tweens.add({ targets: c.root, alpha: 0.15, scale: c.scale * 0.9, duration: 160 });
     }
     this.time.delayedCall(230, () => {
       this.payload.onPick(card.upgrade);
@@ -227,8 +245,13 @@ export class CardSelect extends Scene {
 
     const p = this.input.activePointer;
     for (const card of this.cards) {
-      const halfW = CARD_W / 2;
-      const halfH = CARD_H / 2;
+      if (card.edition) {
+        card.edition.setUniform('uTime', t);
+      }
+      if (!card.ready) continue;
+
+      const halfW = (CARD_W * card.scale) / 2;
+      const halfH = (CARD_H * card.scale) / 2;
       const over = Math.abs(p.x - card.baseX) < halfW && Math.abs(p.y - card.baseY) < halfH;
       card.hover = Phaser.Math.Linear(card.hover, over ? 1 : 0, 0.18);
 
@@ -241,14 +264,12 @@ export class CardSelect extends Scene {
       }
       card.wasOver = over;
 
-      // idle sway when not hovered, tilt toward cursor when hovered
       const idle = Math.sin(t + card.phase) * 0.03 * (1 - card.hover);
       card.root.rotation = idle + tiltX * 0.12 * card.hover;
-      card.root.setScale(1 + 0.08 * card.hover);
-      card.root.y = card.baseY - 18 * card.hover;
+      card.root.setScale(card.scale * (1 + 0.1 * card.hover));
+      card.root.y = card.baseY - 22 * card.hover;
 
       if (card.edition) {
-        card.edition.setUniform('uTime', t);
         card.edition.setUniform('uTilt', [tiltX, tiltY]);
         card.edition.setPosition(card.root.x, card.root.y);
         card.edition.rotation = card.root.rotation;

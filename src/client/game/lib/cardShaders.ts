@@ -9,6 +9,7 @@ precision mediump float;
 varying vec2 outTexCoord;
 uniform float uTime;
 uniform vec2 uResolution;
+uniform float uAlpha; // <1 lets the slowed game show through behind it
 void main(void){
   vec2 uv = (outTexCoord - 0.5);
   uv.x *= uResolution.x / uResolution.y;
@@ -25,7 +26,7 @@ void main(void){
   vec3 col = mix(c1, c2, 0.5 + 0.5 * sin(v * 3.14159));
   col = mix(col, c3, 0.5 + 0.5 * cos(v * 3.14159 + r * 3.0));
   col *= 0.55 + 0.25 * sin(r * 12.0 - t * 3.0); // subtle radial banding
-  gl_FragColor = vec4(col, 1.0);
+  gl_FragColor = vec4(col, uAlpha);
 }`;
 
 // Edition shimmer drawn additively over a card. uMode: 0 foil, 1 holographic,

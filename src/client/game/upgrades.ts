@@ -1,12 +1,14 @@
 import * as Phaser from 'phaser';
 
-// Data-driven upgrade pool for the Horde roguelite level-up loop. Each upgrade
-// mutates the player's stat fields (UpgradeTarget) when chosen. Rarity drives the
-// card's edition shader + frame colour + draw weight.
+// Data-driven upgrade pool for the Horde roguelite. Upgrades either tweak the
+// player's stat fields (UpgradeTarget), acquire/level a weapon, or unlock a
+// synergy. `available(state)` filters what can be offered (e.g. a synergy only
+// appears once you own both its weapons). Rarity drives the card's edition
+// shader, frame colour, and draw weight.
 
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary';
 
-/** The mutable player stats an upgrade can change (HordeBench implements this). */
+/** Mutable player stats an upgrade can change. */
 export type UpgradeTarget = {
   damage: number;
   fireDelayMs: number;
@@ -18,13 +20,28 @@ export type UpgradeTarget = {
   burstCount: number;
 };
 
+/** What an upgrade can do to the game (HordeBench implements this). */
+export type ApplyHost = UpgradeTarget & {
+  addOrLevelWeapon: (id: string) => void;
+  setSynergy: (id: string) => void;
+};
+
+/** Read-only game state used to filter which upgrades may be offered. */
+export type GameState = {
+  ownsWeapon: (id: string) => boolean;
+  weaponLevel: (id: string) => number;
+  weaponCount: () => number;
+  hasSynergy: (id: string) => boolean;
+};
+
 export type Upgrade = {
   id: string;
   name: string;
   desc: string;
   rarity: Rarity;
   icon: { tex: string; tint: number };
-  apply: (t: UpgradeTarget) => void;
+  available?: (s: GameState) => boolean;
+  apply: (h: ApplyHost) => void;
 };
 
 export const RARITY_COLOR: Record<Rarity, number> = {
@@ -34,7 +51,6 @@ export const RARITY_COLOR: Record<Rarity, number> = {
   legendary: 0xffd000,
 };
 
-// Edition shader mode per rarity (-1 = none). See cardShaders.ts EDITION_FRAG.
 export const RARITY_EDITION: Record<Rarity, number> = {
   common: -1,
   rare: 0, // foil
@@ -44,12 +60,52 @@ export const RARITY_EDITION: Record<Rarity, number> = {
 
 const RARITY_WEIGHT: Record<Rarity, number> = {
   common: 60,
-  rare: 25,
+  rare: 26,
   epic: 12,
   legendary: 4,
 };
 
+const MAX_WEAPONS = 4;
+
 export const UPGRADES: Upgrade[] = [
+  // ── Weapons (acquire if new, otherwise +1 level) ──
+  {
+    id: 'w-bolt',
+    name: 'Plasma Bolt',
+    desc: 'Auto-firing bolts — new or +1 level',
+    rarity: 'common',
+    icon: { tex: 'glow', tint: 0xffe066 },
+    apply: (h) => h.addOrLevelWeapon('bolt'),
+  },
+  {
+    id: 'w-orbit',
+    name: 'Orbit',
+    desc: 'Orbs that circle you — new or +1 level',
+    rarity: 'rare',
+    icon: { tex: 'ball', tint: 0x66ffee },
+    available: (s) => s.ownsWeapon('orbit') || s.weaponCount() < MAX_WEAPONS,
+    apply: (h) => h.addOrLevelWeapon('orbit'),
+  },
+  {
+    id: 'w-nova',
+    name: 'Nova Blast',
+    desc: 'Expanding shockwave — new or +1 level',
+    rarity: 'epic',
+    icon: { tex: 'ring', tint: 0x88ccff },
+    available: (s) => s.ownsWeapon('nova') || s.weaponCount() < MAX_WEAPONS,
+    apply: (h) => h.addOrLevelWeapon('nova'),
+  },
+  // ── Synergy ──
+  {
+    id: 'syn-orbital-nova',
+    name: 'Orbital Nova',
+    desc: 'Your orbs erupt into mini-novas',
+    rarity: 'legendary',
+    icon: { tex: 'ring', tint: 0xff66cc },
+    available: (s) => s.ownsWeapon('orbit') && s.ownsWeapon('nova') && !s.hasSynergy('orbital-nova'),
+    apply: (h) => h.setSynergy('orbital-nova'),
+  },
+  // ── Passive stats ──
   {
     id: 'fangs',
     name: 'Sharper Fangs',
@@ -81,17 +137,6 @@ export const UPGRADES: Upgrade[] = [
     rarity: 'common',
     icon: { tex: 'dot', tint: 0x88ccff },
     apply: (t) => (t.boltSpeed += 120),
-  },
-  {
-    id: 'extra-bolt',
-    name: 'Split Shot',
-    desc: '+1 projectile',
-    rarity: 'rare',
-    icon: { tex: 'glow', tint: 0x9b8cff },
-    apply: (t) => {
-      t.projectiles += 1;
-      t.maxBolts += 8;
-    },
   },
   {
     id: 'crit',
@@ -131,23 +176,11 @@ export const UPGRADES: Upgrade[] = [
       t.fireDelayMs *= 0.8;
     },
   },
-  {
-    id: 'swarmslayer',
-    name: 'Swarm Slayer',
-    desc: '+2 projectiles, +10% crit',
-    rarity: 'legendary',
-    icon: { tex: 'star', tint: 0xff66cc },
-    apply: (t) => {
-      t.projectiles += 2;
-      t.maxBolts += 16;
-      t.critChance = Math.min(1, t.critChance + 0.1);
-    },
-  },
 ];
 
-/** Draw `n` distinct upgrades, weighted by rarity. */
-export function pickUpgrades(n: number): Upgrade[] {
-  const pool = UPGRADES.slice();
+/** Draw `n` distinct upgrades that are currently available, weighted by rarity. */
+export function buildChoices(n: number, state: GameState): Upgrade[] {
+  const pool = UPGRADES.filter((u) => !u.available || u.available(state));
   const chosen: Upgrade[] = [];
   for (let k = 0; k < n && pool.length > 0; k++) {
     let total = 0;
