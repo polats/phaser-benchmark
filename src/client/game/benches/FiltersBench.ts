@@ -1,26 +1,41 @@
 import * as Phaser from 'phaser';
 import type { Cameras } from 'phaser';
 import { BenchScene } from './BenchScene';
+import { EventBus } from '../EventBus';
+import { GameEvents, type FiltersConfigPayload } from '../events';
 
 // Phaser 4's unified filter system: any number of filters can be stacked on a
 // camera. Each filter is a full-screen pass, so this bench measures fragment
 // fillrate — usually the first wall you hit on mobile. We stack one more filter
-// per second (cycling through the built-ins) until FPS drops.
+// per second (cycling through the selected types) until FPS drops.
+//
+// The set of filter types to stack is configurable from the React HUD (see
+// BenchControls). With no selection we cycle through every built-in below.
 //
 // Docs: https://phaser.io/news/2026/05/phaser-4-filter-system
-const FILTER_CYCLE: ((list: Cameras.Scene2D.Camera['filters']['internal']) => void)[] = [
-  (f) => void f.addBlur(),
-  (f) => void f.addGlow(),
-  (f) => void f.addVignette(),
-  (f) => void f.addBarrel(),
-  (f) => void f.addColorMatrix(),
-  (f) => void f.addBokeh(),
-  (f) => void f.addTiltShift(),
-  (f) => void f.addPixelate(),
+type FilterInternal = Cameras.Scene2D.Camera['filters']['internal'];
+type FilterOption = { name: string; apply: (f: FilterInternal) => void };
+
+export const FILTER_OPTIONS: FilterOption[] = [
+  { name: 'Blur', apply: (f) => void f.addBlur() },
+  { name: 'Glow', apply: (f) => void f.addGlow() },
+  { name: 'Vignette', apply: (f) => void f.addVignette() },
+  { name: 'Barrel', apply: (f) => void f.addBarrel() },
+  { name: 'ColorMatrix', apply: (f) => void f.addColorMatrix() },
+  { name: 'Bokeh', apply: (f) => void f.addBokeh() },
+  { name: 'TiltShift', apply: (f) => void f.addTiltShift() },
+  { name: 'Pixelate', apply: (f) => void f.addPixelate() },
 ];
+
+/** Names exposed to the React HUD so it can render a toggle per filter. */
+export const FILTER_NAMES = FILTER_OPTIONS.map((o) => o.name);
 
 export class FiltersBench extends BenchScene {
   protected readonly benchId = 'filters';
+
+  // The filter types this bench cycles through. Defaults to all of them; the
+  // React HUD narrows it via the FiltersConfig event.
+  private selected: FilterOption[] = FILTER_OPTIONS.slice();
 
   constructor() {
     super({ key: 'FiltersBench' });
@@ -28,6 +43,11 @@ export class FiltersBench extends BenchScene {
     // "count" here = number of stacked filter passes.
     this.stepSize = 1;
     this.maxCount = 64;
+  }
+
+  override create() {
+    super.create();
+    EventBus.on(GameEvents.FiltersConfig, this.onConfig, this);
   }
 
   protected setup() {
@@ -61,8 +81,22 @@ export class FiltersBench extends BenchScene {
   protected addObjects(n: number) {
     const internal = this.cameras.main.filters.internal;
     for (let i = 0; i < n; i++) {
-      const add = FILTER_CYCLE[this.count % FILTER_CYCLE.length]!;
-      add(internal);
+      const add = this.selected[this.count % this.selected.length]!;
+      add.apply(internal);
     }
+  }
+
+  // React picked a new filter set: drop the stacked filters and ramp again from
+  // scratch with only the chosen types (an empty pick means "all of them").
+  private onConfig(payload: FiltersConfigPayload) {
+    const picked = FILTER_OPTIONS.filter((o) => payload.filters.includes(o.name));
+    this.selected = picked.length > 0 ? picked : FILTER_OPTIONS.slice();
+    this.cameras.main.filters.internal.clear();
+    this.restartRamp();
+  }
+
+  override shutdown() {
+    super.shutdown();
+    EventBus.off(GameEvents.FiltersConfig, this.onConfig, this);
   }
 }

@@ -80,6 +80,55 @@ body,
   background: rgba(255, 255, 255, 0.15);
 }
 
+/* Per-scene tuning panel (filter toggles / shader picker). Sits bottom-centre so
+   it clears the bench bar, perf HUD, and leaderboard. */
+.bench-controls {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  max-width: 90%;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 6px;
+}
+
+.bench-controls__title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.75;
+  text-align: center;
+}
+
+.bench-controls__items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+
+.bench-controls button {
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f2f2f2;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.bench-controls button.on {
+  color: #0b1020;
+  background: #ffd166;
+  border-color: #ffd166;
+}
+
 .leaderboard {
   position: absolute;
   bottom: 8px;

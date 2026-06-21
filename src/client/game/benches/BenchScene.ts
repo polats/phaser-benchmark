@@ -66,6 +66,19 @@ export abstract class BenchScene extends Scene {
     this.onUpdate(delta);
   }
 
+  /**
+   * Discards progress and restarts the ramp from zero, reusing the existing
+   * world. Subclasses call this when a live config change (e.g. the user picks a
+   * different filter set) should restart the measurement without a full rebuild.
+   */
+  protected restartRamp() {
+    this.finished = false;
+    this.count = 0;
+    this.ticks = 0;
+    this.addObjects(this.stepSize);
+    this.count += this.stepSize;
+  }
+
   private evaluate() {
     if (this.finished) return;
     this.ticks += 1;
