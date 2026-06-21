@@ -40,6 +40,24 @@ body,
   pointer-events: auto;
 }
 
+/* Live build identifier, pinned bottom-right so it's always visible to confirm
+   which deploy is running. Non-interactive; sits above the canvas. */
+.build-badge {
+  position: absolute;
+  right: 6px;
+  bottom: 4px;
+  z-index: 20;
+  pointer-events: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  line-height: 1;
+  color: rgba(242, 242, 242, 0.55);
+  background: rgba(0, 0, 0, 0.35);
+  padding: 3px 5px;
+  border-radius: 4px;
+  user-select: text;
+}
+
 .perf {
   position: absolute;
   top: 8px;

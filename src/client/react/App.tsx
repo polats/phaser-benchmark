@@ -13,6 +13,7 @@ import {
   type ScorePayload,
 } from '../game/events';
 import { bridge } from '../game/devvit-bridge';
+import { APP_VERSION, BUILD_TIME } from '../build-info';
 import { HOME_SCENE_KEY } from '../game/main';
 import { BENCHES } from '../game/benches/registry';
 import type { LeaderboardEntry } from '../../shared/api';
@@ -127,6 +128,9 @@ export function App() {
         {!isBench ? (
           <Leaderboard entries={entries} username={username} bestScore={bestScore} />
         ) : null}
+        <span className="build-badge" title={BUILD_TIME ? `Built ${BUILD_TIME}` : undefined}>
+          build {APP_VERSION}
+        </span>
       </div>
     </>
   );
