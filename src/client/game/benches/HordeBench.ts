@@ -66,6 +66,7 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
   private leveling = false;
   private slowScale = 1;
   private hitstopT = 0;
+  private shockwave?: Phaser.Filters.Barrel;
   private xpBar?: GameObjects.Graphics;
   private levelText?: GameObjects.Text;
 
@@ -97,28 +98,30 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     this.add
       .tileSprite(width / 2, height / 2, width, height, 'stones')
       .setLighting(true)
-      .setTint(0x6b6480)
-      .setAlpha(0.92)
+      .setTint(0x9089ab)
+      .setAlpha(0.95)
       .setDepth(-900);
 
     // Cinematic post-FX: colour grade + bloom + vignette over the whole scene.
     this.cameras.main.filters.internal.clear();
     applyCinematicFX(this.cameras.main);
+    // Barrel distortion held at rest (1 = none); pulsed as a screen-warp
+    // shockwave when a Nova / Singularity goes off.
+    this.shockwave = this.cameras.main.filters.internal.addBarrel(1);
 
-    // Low ambient so spiders read as silhouettes in the dark, then light up
-    // dramatically under the player + mouse lights.
+    // Ambient lifts the whole arena so it reads clearly; lights still add punch.
     this.lights.enable();
-    this.lights.setAmbientColor(0x2a2735);
+    this.lights.setAmbientColor(0x565272);
 
     // Player: a bright orb with a self-illuminating glow + a real light that
     // shades nearby spiders.
     this.player = this.add.image(width / 2, height / 2, 'ball').setTint(0x66ddff).setScale(1.1).setDepth(18);
-    this.playerLight = this.add.pointlight(width / 2, height / 2, 0x55ccff, 150, 0.5).setDepth(4);
-    this.tweens.add({ targets: this.playerLight, intensity: 0.3, duration: 700, yoyo: true, repeat: -1 });
-    this.lights.addLight(width / 2, height / 2, 380, 0xffdca8, 2);
+    this.playerLight = this.add.pointlight(width / 2, height / 2, 0x66d4ff, 180, 0.7).setDepth(4);
+    this.tweens.add({ targets: this.playerLight, intensity: 0.45, duration: 700, yoyo: true, repeat: -1 });
+    this.lights.addLight(width / 2, height / 2, 470, 0xffe2b4, 2.6);
 
     // Light that follows the cursor (lifted off the surface for nicer shading).
-    this.mouseLight = this.lights.addLight(width / 2, height / 2, 300, 0xbbccff, 3).setZNormal(0.5);
+    this.mouseLight = this.lights.addLight(width / 2, height / 2, 360, 0xcfdcff, 3.4).setZNormal(0.5);
 
     // Cyan aura swirling off the player.
     this.aura = this.add
@@ -257,6 +260,9 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     if (big) {
       this.hitstopT = 55;
       this.tweens.add({ targets: this.cameras.main, zoom: 1.04, duration: 70, yoyo: true });
+      if (this.shockwave) {
+        this.tweens.add({ targets: this.shockwave, amount: 1.16, duration: 90, yoyo: true, ease: 'Quad.easeOut' });
+      }
     }
   }
 
