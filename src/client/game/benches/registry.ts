@@ -29,6 +29,13 @@ export const BENCHES: BenchInfo[] = [
     description: 'Dynamic lights + normal maps + self-shadows over a field of lit sprites.',
   },
   {
+    sceneKey: 'TextBench',
+    benchId: 'text',
+    label: 'Text',
+    description:
+      'Ramp text objects until FPS drops; switch modes to compare canvas Text (stroke/shadow/gradient/dynamic/filters) vs batched BitmapText.',
+  },
+  {
     sceneKey: 'ArcadeBench',
     benchId: 'arcade',
     label: 'Arcade',
