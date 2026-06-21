@@ -154,13 +154,7 @@ export class CardSelect extends Scene {
       })
       .setOrigin(0.5);
 
-    const icon = this.add.image(0, -CARD_H * 0.22, up.icon.tex).setTint(up.icon.tint).setScale(1.5);
-    const iconGlow = this.add
-      .image(0, -CARD_H * 0.22, 'glow')
-      .setTint(up.icon.tint)
-      .setBlendMode(Phaser.BlendModes.ADD)
-      .setScale(1.1)
-      .setAlpha(0.6);
+    const iconObjs = this.buildIcon(up, -CARD_H * 0.22);
 
     const name = this.add
       .text(0, CARD_H * 0.04, up.name, {
@@ -182,7 +176,7 @@ export class CardSelect extends Scene {
       })
       .setOrigin(0.5);
 
-    root.add([shadow, ...extras, panel, iconGlow, icon, rarityLabel, name, desc]);
+    root.add([shadow, ...extras, panel, ...iconObjs, rarityLabel, name, desc]);
 
     let edition: GameObjects.Shader | null = null;
     const mode = RARITY_EDITION[up.rarity];
@@ -221,6 +215,114 @@ export class CardSelect extends Scene {
     };
     root.on('pointerdown', () => this.pick(card));
     return card;
+  }
+
+  // Which animated icon a card shows (weapons preview their effect).
+  private fxKind(up: Upgrade): string {
+    const map: Record<string, string> = {
+      'w-bolt': 'bolt',
+      'w-orbit': 'orbit',
+      'w-nova': 'nova',
+      'w-singularity': 'singularity',
+      'w-ricochet': 'ricochet',
+      'syn-orbital-nova': 'orbit',
+    };
+    return map[up.id] ?? (up.icon.tex === 'star' ? 'spin' : 'pulse');
+  }
+
+  // Build a small ANIMATED icon for a card: weapons preview their motion (orbiting
+  // orbs, an expanding nova ring, a collapsing singularity, a bouncing ricochet,
+  // a firing bolt); passives spin or pulse. Returns the objects to add to the card.
+  private buildIcon(up: Upgrade, iy: number): GameObjects.GameObject[] {
+    const tint = up.icon.tint;
+    const ADD = Phaser.BlendModes.ADD;
+    const objs: GameObjects.GameObject[] = [];
+
+    const glow = this.add.image(0, iy, 'glow').setTint(tint).setBlendMode(ADD).setScale(1.1).setAlpha(0.55);
+    this.tweens.add({ targets: glow, scale: 1.45, alpha: 0.28, duration: 1000, yoyo: true, repeat: -1 });
+    objs.push(glow);
+
+    switch (this.fxKind(up)) {
+      case 'orbit': {
+        objs.push(this.add.image(0, iy, 'ball').setTint(tint).setBlendMode(ADD).setScale(0.7));
+        const orbs = [0, 1, 2].map(() => this.add.image(0, iy, 'dot').setTint(tint).setBlendMode(ADD).setScale(0.7));
+        objs.push(...orbs);
+        this.tweens.addCounter({
+          from: 0,
+          to: Math.PI * 2,
+          duration: 1700,
+          repeat: -1,
+          onUpdate: (t) => {
+            const a = t.getValue() ?? 0;
+            orbs.forEach((o, i) => o.setPosition(Math.cos(a + i * 2.094) * 18, iy + Math.sin(a + i * 2.094) * 18));
+          },
+        });
+        break;
+      }
+      case 'nova': {
+        objs.push(this.add.image(0, iy, 'glow').setTint(tint).setBlendMode(ADD).setScale(0.45));
+        const r = this.add.image(0, iy, 'ring').setTint(tint).setBlendMode(ADD).setScale(0.2);
+        objs.push(r);
+        this.tweens.add({
+          targets: r,
+          scale: 1.3,
+          alpha: { from: 1, to: 0 },
+          duration: 1100,
+          repeat: -1,
+          onRepeat: () => r.setScale(0.2).setAlpha(1),
+        });
+        break;
+      }
+      case 'singularity': {
+        const r = this.add.image(0, iy, 'ring').setTint(tint).setBlendMode(ADD).setScale(1.3);
+        const core = this.add.image(0, iy, 'glow').setTint(tint).setBlendMode(ADD).setScale(0.4);
+        objs.push(r, core);
+        this.tweens.add({
+          targets: r,
+          scale: 0.3,
+          angle: 360,
+          alpha: { from: 0.3, to: 1 },
+          duration: 1200,
+          repeat: -1,
+          onRepeat: () => r.setScale(1.3).setAngle(0).setAlpha(0.3),
+        });
+        this.tweens.add({ targets: core, scale: 0.7, duration: 700, yoyo: true, repeat: -1 });
+        break;
+      }
+      case 'ricochet': {
+        const dot = this.add.image(0, iy, 'ring').setTint(tint).setBlendMode(ADD).setScale(0.55);
+        objs.push(dot);
+        this.tweens.add({ targets: dot, x: 20, duration: 420, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+        this.tweens.add({ targets: dot, y: iy - 14, duration: 300, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+        break;
+      }
+      case 'bolt': {
+        objs.push(this.add.image(0, iy, up.icon.tex).setTint(tint).setBlendMode(ADD).setScale(1.3));
+        const shot = this.add.image(0, iy, 'dot').setTint(0xffffff).setBlendMode(ADD).setScale(0.6);
+        objs.push(shot);
+        this.tweens.add({
+          targets: shot,
+          y: iy - 26,
+          alpha: { from: 1, to: 0 },
+          duration: 460,
+          repeat: -1,
+          onRepeat: () => shot.setPosition(0, iy).setAlpha(1),
+        });
+        break;
+      }
+      case 'spin': {
+        const core = this.add.image(0, iy, up.icon.tex).setTint(tint).setScale(1.5);
+        objs.push(core);
+        this.tweens.add({ targets: core, angle: 360, duration: 2600, repeat: -1 });
+        break;
+      }
+      default: {
+        const core = this.add.image(0, iy, up.icon.tex).setTint(tint).setScale(1.4);
+        objs.push(core);
+        this.tweens.add({ targets: core, scale: 1.65, duration: 620, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+      }
+    }
+    return objs;
   }
 
   private pick(card: Card) {
