@@ -3,6 +3,7 @@ import type { GameObjects, Physics } from 'phaser';
 import { BenchScene } from './BenchScene';
 import { addGradientBackground } from '../lib/look';
 import { ensureRetroFont, RETRO_FONT_KEY } from '../lib/retroFont';
+import { type Upgrade, type UpgradeTarget, pickUpgrades } from '../upgrades';
 
 // Floating damage numbers tween from white to gold as they rise.
 const DMG_WHITE = new Phaser.Display.Color(255, 255, 255);
@@ -22,8 +23,6 @@ const DMG_GOLD = new Phaser.Display.Color(255, 208, 0);
 type ArcadeImage = Physics.Arcade.Image;
 
 const SWARM_RADIUS = 60;
-const MAX_BOLTS = 16;
-const BOLT_SPEED = 540;
 // XP jewels are normal-mapped + lit (like the spiders) AND carry their own
 // light, so they sparkle and illuminate the swarm as they fly to the player.
 const JEWEL_COLORS = [0x66ffcc, 0xff66cc, 0xffd166, 0x88aaff, 0xff7755];
@@ -31,7 +30,7 @@ const MAX_JEWEL_LIGHTS = 16; // cap real lights; extra jewels still glow (lit sp
 
 type Jewel = { sprite: GameObjects.Image; light: GameObjects.Light | null };
 
-export class HordeBench extends BenchScene {
+export class HordeBench extends BenchScene implements UpgradeTarget {
   protected readonly benchId = 'horde';
 
   private player!: GameObjects.Image;
@@ -41,12 +40,29 @@ export class HordeBench extends BenchScene {
   private bolts!: Physics.Arcade.Group;
   private gems: Jewel[] = [];
   private jewelLights = 0;
-  private damage = 1; // base hit damage (grows once the level-up loop lands)
+
+  // UpgradeTarget — mutable player stats, changed by chosen upgrade cards.
+  damage = 1;
+  fireDelayMs = 85;
+  maxBolts = 16;
+  projectiles = 1;
+  critChance = 0.12;
+  jewelChance = 0.3;
+  boltSpeed = 540;
+  burstCount = 14;
+
+  // Leveling
+  private xp = 0;
+  private level = 1;
+  private xpToNext = 4;
+  private leveling = false;
+  private fireTimer = 0;
+  private xpBar?: GameObjects.Graphics;
+  private levelText?: GameObjects.Text;
 
   private hitBurst!: GameObjects.Particles.ParticleEmitter;
   private trail!: GameObjects.Particles.ParticleEmitter;
   private aura!: GameObjects.Particles.ParticleEmitter;
-  private fireEvent?: Phaser.Time.TimerEvent;
 
   constructor() {
     super({ key: 'HordeBench', physics: { arcade: { debug: false } } });
@@ -130,15 +146,27 @@ export class HordeBench extends BenchScene {
       const e = enemyObj as ArcadeImage;
       const b = boltObj as ArcadeImage;
       if (!e.active || !b.active) return;
-      this.hitBurst.explode(14, e.x, e.y);
-      const crit = Math.random() < 0.12;
+      this.hitBurst.explode(this.burstCount, e.x, e.y);
+      const crit = Math.random() < this.critChance;
       this.spawnDamageText(e.x, e.y, crit ? this.damage * 3 : this.damage, crit);
-      if (Math.random() < 0.3) this.spawnJewel(e.x, e.y);
+      if (Math.random() < this.jewelChance) this.spawnJewel(e.x, e.y);
       e.destroy();
       b.destroy();
     });
 
-    this.fireEvent = this.time.addEvent({ delay: 85, loop: true, callback: this.fire, callbackScope: this });
+    // Leveling state + XP bar (bolts now fire from a manual accumulator in
+    // onUpdate so upgrades can change the cooldown live).
+    this.xp = 0;
+    this.level = 1;
+    this.xpToNext = 4;
+    this.leveling = false;
+    this.fireTimer = 0;
+    this.xpBar = this.add.graphics().setScrollFactor(0).setDepth(40);
+    this.levelText = this.add
+      .text(width / 2, 12, 'LV 1', { fontFamily: 'Arial Black', fontSize: 16, color: '#ffd166' })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(40);
   }
 
   protected addObjects(n: number) {
@@ -162,28 +190,60 @@ export class HordeBench extends BenchScene {
 
   private fire() {
     const kids = this.enemies.getChildren() as ArcadeImage[];
-    if (kids.length === 0 || this.bolts.getLength() >= MAX_BOLTS) return;
-
-    // Aim at the nearest spider's CURRENT position, then fly straight (no homing).
+    if (kids.length === 0) return;
     const px = this.player.x;
     const py = this.player.y;
-    let target = kids[0]!;
-    let best = Infinity;
-    for (const e of kids) {
-      const dd = (e.x - px) * (e.x - px) + (e.y - py) * (e.y - py);
-      if (dd < best) {
-        best = dd;
-        target = e;
-      }
-    }
 
-    const b = this.bolts.create(px, py, 'glow') as ArcadeImage;
-    b.setTint(0xffee66).setScale(0.4).setBlendMode(Phaser.BlendModes.ADD).setDepth(16);
-    this.physics.moveToObject(b, target, BOLT_SPEED);
-    this.time.delayedCall(1300, () => {
-      if (b.active) b.destroy();
-    });
+    // Fire `projectiles` straight bolts: the first aims at the nearest spider,
+    // extras spread to random ones. Physics `overlap` resolves the hits.
+    for (let n = 0; n < this.projectiles; n++) {
+      if (this.bolts.getLength() >= this.maxBolts) break;
+      let target = kids[0]!;
+      if (n === 0) {
+        let best = Infinity;
+        for (const e of kids) {
+          const dd = (e.x - px) * (e.x - px) + (e.y - py) * (e.y - py);
+          if (dd < best) {
+            best = dd;
+            target = e;
+          }
+        }
+      } else {
+        target = kids[Phaser.Math.Between(0, kids.length - 1)]!;
+      }
+      const b = this.bolts.create(px, py, 'glow') as ArcadeImage;
+      b.setTint(0xffee66).setScale(0.4).setBlendMode(Phaser.BlendModes.ADD).setDepth(16);
+      this.physics.moveToObject(b, target, this.boltSpeed);
+      this.time.delayedCall(1300, () => {
+        if (b.active) b.destroy();
+      });
+    }
     this.hitBurst.explode(4, px, py); // muzzle flash
+  }
+
+  private gainXp(n: number) {
+    // Just bank XP; the actual level-up is triggered from onUpdate so it never
+    // fires while the (single-instance) card scene is mid-teardown.
+    this.xp += n;
+  }
+
+  // Pause the game and present the Balatro-style upgrade cards. On pick, apply
+  // the upgrade and resume (chaining if another level is already due).
+  private levelUp() {
+    this.leveling = true;
+    this.xp -= this.xpToNext;
+    this.level += 1;
+    this.xpToNext = Math.ceil(this.xpToNext * 1.4) + 2;
+    this.cameras.main.flash(160, 255, 240, 180);
+    this.scene.pause();
+    this.scene.launch('CardSelect', {
+      choices: pickUpgrades(3),
+      onPick: (u: Upgrade) => {
+        u.apply(this);
+        this.leveling = false;
+        this.scene.resume(); // a further pending level-up is picked up by onUpdate
+      },
+    });
   }
 
   // An XP jewel: a normal-mapped, lit gem sprite that ALSO carries its own light
@@ -233,10 +293,32 @@ export class HordeBench extends BenchScene {
     });
   }
 
+  private redrawXpBar() {
+    if (!this.xpBar) return;
+    const w = this.scale.width;
+    const frac = Phaser.Math.Clamp(this.xp / this.xpToNext, 0, 1);
+    this.xpBar.clear();
+    this.xpBar.fillStyle(0x000000, 0.5).fillRect(0, 0, w, 6);
+    this.xpBar.fillStyle(0x66ddff, 1).fillRect(0, 0, w * frac, 6);
+    this.levelText?.setText('LV ' + this.level);
+  }
+
   protected override onUpdate(delta: number) {
     const dt = delta / 1000;
     const px = this.player.x;
     const py = this.player.y;
+
+    // Auto-fire on a manual accumulator so upgrades can change the cooldown live.
+    // Trigger a pending level-up here (only runs while the game isn't paused),
+    // so the card scene is always fully torn down before the next one launches.
+    if (!this.leveling && this.xp >= this.xpToNext) this.levelUp();
+
+    this.fireTimer += delta;
+    if (this.fireTimer >= this.fireDelayMs) {
+      this.fireTimer = 0;
+      this.fire();
+    }
+    this.redrawXpBar();
 
     // Mouse-follow light (in world space).
     const p = this.input.activePointer;
@@ -290,13 +372,13 @@ export class HordeBench extends BenchScene {
           this.jewelLights--;
         }
         this.gems.splice(i, 1);
+        this.gainXp(1); // jewels are XP
       }
     }
   }
 
   override shutdown() {
     super.shutdown();
-    this.fireEvent?.remove();
     for (const g of this.gems) {
       if (g.light) this.lights.removeLight(g.light);
     }

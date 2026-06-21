@@ -17,6 +17,7 @@ import { CreepyCrawlyDemo } from './demos/CreepyCrawlyDemo';
 import { GpuAnimatedDemo } from './demos/GpuAnimatedDemo';
 import { BunnyBounceDemo } from './demos/BunnyBounceDemo';
 import { ShaderDemo } from './demos/ShaderDemo';
+import { CardSelect } from './scenes/CardSelect';
 
 // The scene the "Home" button returns to (the title screen).
 export const HOME_SCENE_KEY = 'HordeBench';
@@ -59,6 +60,7 @@ const config: Types.Core.GameConfig = {
     GpuAnimatedDemo,
     BunnyBounceDemo,
     ShaderDemo,
+    CardSelect,
   ],
 };
 
