@@ -65,7 +65,7 @@ const RARITY_WEIGHT: Record<Rarity, number> = {
   legendary: 4,
 };
 
-const MAX_WEAPONS = 4;
+const MAX_WEAPONS = 5;
 
 export const UPGRADES: Upgrade[] = [
   // ── Weapons (acquire if new, otherwise +1 level) ──
@@ -94,6 +94,24 @@ export const UPGRADES: Upgrade[] = [
     icon: { tex: 'ring', tint: 0x88ccff },
     available: (s) => s.ownsWeapon('nova') || s.weaponCount() < MAX_WEAPONS,
     apply: (h) => h.addOrLevelWeapon('nova'),
+  },
+  {
+    id: 'w-ricochet',
+    name: 'Ricochet',
+    desc: 'A bolt that bounces off the walls — new or +1 level',
+    rarity: 'rare',
+    icon: { tex: 'ring', tint: 0x66ffaa },
+    available: (s) => s.ownsWeapon('ricochet') || s.weaponCount() < MAX_WEAPONS,
+    apply: (h) => h.addOrLevelWeapon('ricochet'),
+  },
+  {
+    id: 'w-singularity',
+    name: 'Singularity',
+    desc: 'A gravity well that pulls the swarm in, then implodes',
+    rarity: 'legendary',
+    icon: { tex: 'glow', tint: 0x9a44ff },
+    available: (s) => s.ownsWeapon('singularity') || s.weaponCount() < MAX_WEAPONS,
+    apply: (h) => h.addOrLevelWeapon('singularity'),
   },
   // ── Synergy ──
   {

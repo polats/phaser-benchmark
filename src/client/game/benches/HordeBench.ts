@@ -132,6 +132,12 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
       .setDepth(22);
 
     this.enemies = this.physics.add.group();
+    // World bounds give the Ricochet bolts walls to bounce off. Spiders spawn
+    // outside the bounds and don't collide with them (collideWorldBounds stays
+    // off), so they still stream in from the dark.
+    this.physics.world.setBounds(0, 0, width, height);
+    // Spiders physically jostle each other — the swarm is a real crowd.
+    this.physics.add.collider(this.enemies, this.enemies);
 
     // Weapons: start with the Plasma Bolt; upgrades add/level more.
     this.weapons = [];
@@ -168,17 +174,35 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
       e.setLighting(true);
       e.setSelfShadow(true);
       e.setData('speed', Phaser.Math.Between(35, 80));
+      e.setData('hp', 2);
     }
   }
 
-  // Resolve a hit on a spider (WeaponHost): burst, damage number, jewel, kill.
-  hitEnemy(e: ArcadeImage) {
+  // Resolve a hit on a spider (WeaponHost): damage number, physics knockback
+  // away from the impact, HP, and a burst + jewel on the killing blow.
+  hitEnemy(e: ArcadeImage, fromX?: number, fromY?: number) {
     if (!e.active) return;
-    this.hitBurst.explode(this.burstCount, e.x, e.y);
     const crit = Math.random() < this.critChance;
-    this.spawnDamageText(e.x, e.y, crit ? this.damage * 3 : this.damage, crit);
-    if (Math.random() < this.jewelChance) this.spawnJewel(e.x, e.y);
-    e.destroy();
+    const dmg = crit ? this.damage * 3 : this.damage;
+    this.spawnDamageText(e.x, e.y, dmg, crit);
+
+    if (fromX !== undefined && fromY !== undefined) {
+      const dx = e.x - fromX;
+      const dy = e.y - fromY;
+      const d = Math.hypot(dx, dy) || 1;
+      e.setVelocity((dx / d) * 240, (dy / d) * 240);
+      e.setData('knock', 180); // brief window where steering is suppressed
+    }
+
+    const hp = ((e.getData('hp') as number) ?? 1) - dmg;
+    if (hp <= 0) {
+      this.hitBurst.explode(this.burstCount, e.x, e.y);
+      if (Math.random() < this.jewelChance) this.spawnJewel(e.x, e.y);
+      e.destroy();
+    } else {
+      e.setData('hp', hp);
+      this.hitBurst.explode(4, e.x, e.y); // small non-lethal spark
+    }
   }
 
   // Bullet-time: slow the sim instead of pausing (Arcade timeScale is inverse;
@@ -319,6 +343,13 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     // above standard, so subtract PI/2.
     const kids = this.enemies.getChildren() as ArcadeImage[];
     for (const e of kids) {
+      // While knocked back or pulled by a well, ride the physics velocity instead
+      // of steering toward the player.
+      const kt = (e.getData('knock') as number) ?? 0;
+      if (kt > 0) {
+        e.setData('knock', kt - delta);
+        continue;
+      }
       const dx = px - e.x;
       const dy = py - e.y;
       const d = Math.hypot(dx, dy) || 1;
