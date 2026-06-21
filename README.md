@@ -120,6 +120,7 @@ compare real devices inside the Reddit app. The harness lives in
 | **Arcade** | CPU broadphase | Arcade Physics bodies |
 | **Matter** | rigid-body solver | Matter.js stacking |
 | **Box2D** | deterministic heavy physics | Phaser Box2D v3 (WASM-grade) |
+| **Horde** | sprites + particles together | Vampire-Survivors-style swarm: auto-bolts, additive explosion bursts, trails, XP gems |
 
 Plus the **official PhotonStorm Phaser demos**, vendored under `src/client/game/demos/`
 as fixed-load benchmarks ("does this device hold 60fps at N sprites?"):

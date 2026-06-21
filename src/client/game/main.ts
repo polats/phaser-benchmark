@@ -11,6 +11,7 @@ import { GpuSpritesBench } from './benches/GpuSpritesBench';
 import { FiltersBench } from './benches/FiltersBench';
 import { LightingBench } from './benches/LightingBench';
 import { TextBench } from './benches/TextBench';
+import { HordeBench } from './benches/HordeBench';
 import { BigForestScene } from './demos/bigForest';
 import { CreepyCrawlyDemo } from './demos/CreepyCrawlyDemo';
 import { GpuAnimatedDemo } from './demos/GpuAnimatedDemo';
@@ -52,6 +53,7 @@ const config: Types.Core.GameConfig = {
     ArcadeBench,
     MatterBench,
     Box2dBench,
+    HordeBench,
     BigForestScene,
     CreepyCrawlyDemo,
     GpuAnimatedDemo,

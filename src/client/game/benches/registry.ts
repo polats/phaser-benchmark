@@ -53,6 +53,13 @@ export const BENCHES: BenchInfo[] = [
     label: 'Box2D',
     description: 'Phaser Box2D v3 dynamic bodies — drag them; deterministic physics.',
   },
+  {
+    sceneKey: 'HordeBench',
+    benchId: 'horde',
+    label: '🧛 Horde',
+    description:
+      'Vampire-Survivors-style swarm: ramps enemies while auto-bolts explode in additive particle bursts.',
+  },
   // Official PhotonStorm Phaser demos, vendored as fixed-load benchmarks.
   {
     sceneKey: 'BigForest',
