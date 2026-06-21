@@ -41,6 +41,30 @@ const WEAPON_ICONS: Record<string, { tex: string; tint: number }> = {
   singularity: { tex: 'glow', tint: 0x9a44ff },
 };
 
+// Arena edge-light palettes. The run cycles through these on level up so the
+// lighting keeps changing (and reads differently from the Spiders benchmark);
+// all are kept around the same brightness. Four colours = the four edge lights.
+const LIGHT_PALETTES: number[][] = [
+  [0x8844bb, 0x4466cc, 0xcc4488, 0xffaa66], // arcane: purple / blue / magenta / warm
+  [0x2299cc, 0x4455dd, 0x33bbcc, 0x8866ff], // frost: teal / blue / cyan / indigo
+  [0xff7744, 0xcc3366, 0xff5599, 0xaa44cc], // ember: orange / crimson / pink / violet
+  [0xcc55dd, 0x6644cc, 0xff88aa, 0xffcc66], // dusk: violet / indigo / rose / gold
+];
+
+// Named foes so elites/bosses read as special.
+const ELITE_NAMES = ['Venomfang', 'Broodmother', 'Lurker', 'Shadowspun', 'Gravecrawler', 'Dreadmite'];
+const BOSS_NAMES = ['THE WIDOW', 'ARACHNOS', 'SILKREND', 'THE DEVOURER', 'NIGHTWEAVER'];
+
+type Special = {
+  sprite: ArcadeImage;
+  label: GameObjects.Text;
+  bar: GameObjects.Graphics;
+  aura: GameObjects.Image;
+  maxHp: number;
+  isBoss: boolean;
+  w: number;
+};
+
 export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, GameState {
   protected readonly benchId = 'horde';
 
@@ -51,12 +75,17 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
 
   private playerLight!: GameObjects.PointLight;
   private mouseLight!: GameObjects.Light;
+  private edgeLights: GameObjects.Light[] = [];
   private gems: Jewel[] = [];
   private jewelLights = 0;
 
+  // Difficulty ramp + named elites/bosses.
+  private runTime = 0;
+  private specials: Special[] = [];
+
   // UpgradeTarget — mutable player stats, changed by chosen upgrade cards.
   damage = 1;
-  fireDelayMs = 85;
+  fireDelayMs = 150;
   maxBolts = 16;
   projectiles = 1;
   critChance = 0.12;
@@ -119,21 +148,23 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     // shockwave when a Nova / Singularity goes off.
     this.shockwave = this.cameras.main.filters.internal.addBarrel(1);
 
-    // Spiders-demo lighting: big coloured lights off each edge so the normal-
-    // mapped stone floor shows its brown texture with purple / green / warm
-    // tints toward the edges (low ambient lets the colours read).
+    // Big coloured lights off each edge light the normal-mapped stone floor.
+    // The palette cycles on level up (LIGHT_PALETTES); low ambient lets it read.
     this.lights.enable();
     this.lights.setAmbientColor(0x232330);
     const big = Math.max(width, height) * 2.6;
-    this.lights.addLight(-width * 0.3, -height * 0.3, big, 0x8844bb, 1); // purple top-left
-    this.lights.addLight(width * 0.6, -height * 0.6, big, 0x7788aa, 1); // cool top
-    this.lights.addLight(width * 1.3, height * 0.45, big, 0x44ff44, 1); // green right edge
-    this.lights.addLight(width * 0.3, height * 1.3, big, 0xffbb88, 1.3); // warm bottom
+    const pal = LIGHT_PALETTES[0]!;
+    this.edgeLights = [
+      this.lights.addLight(-width * 0.3, -height * 0.3, big, pal[0]!, 1),
+      this.lights.addLight(width * 0.6, -height * 0.6, big, pal[1]!, 1),
+      this.lights.addLight(width * 1.3, height * 0.45, big, pal[2]!, 1),
+      this.lights.addLight(width * 0.3, height * 1.3, big, pal[3]!, 1.3),
+    ];
 
-    // Player: a bright orb with a self-illuminating glow.
-    this.player = this.add.image(width / 2, height / 2, 'ball').setTint(0x66ddff).setScale(1.1).setDepth(18);
-    this.playerLight = this.add.pointlight(width / 2, height / 2, 0x66d4ff, 180, 0.7).setDepth(4);
-    this.tweens.add({ targets: this.playerLight, intensity: 0.45, duration: 700, yoyo: true, repeat: -1 });
+    // Player: a softly glowing orb (toned down so the bloom doesn't blow it out).
+    this.player = this.add.image(width / 2, height / 2, 'ball').setTint(0x55c0e0).setScale(0.82).setDepth(18);
+    this.playerLight = this.add.pointlight(width / 2, height / 2, 0x4fb4dc, 150, 0.42).setDepth(4);
+    this.tweens.add({ targets: this.playerLight, intensity: 0.24, duration: 700, yoyo: true, repeat: -1 });
 
     // Light that follows the cursor (lifted off the surface for nicer shading).
     this.mouseLight = this.lights.addLight(width / 2, height / 2, 320, 0xddeeff, 3).setZNormal(0.5);
@@ -143,11 +174,11 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
       .particles(0, 0, 'glow', {
         lifespan: 650,
         speed: { min: 8, max: 38 },
-        scale: { start: 0.22, end: 0 },
-        alpha: { start: 0.5, end: 0 },
-        tint: 0x66ddff,
+        scale: { start: 0.16, end: 0 },
+        alpha: { start: 0.3, end: 0 },
+        tint: 0x55c0e0,
         blendMode: 'ADD',
-        frequency: 45,
+        frequency: 55,
       })
       .setDepth(6);
     this.aura.startFollow(this.player);
@@ -190,6 +221,18 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(40);
+
+    // Difficulty ramp + named foes. Elites arrive periodically, bosses rarely;
+    // both scale with elapsed run time.
+    this.runTime = 0;
+    this.specials = [];
+    this.time.addEvent({ delay: 17000, loop: true, callback: () => this.spawnElite() });
+    this.time.addEvent({ delay: 58000, loop: true, callback: () => this.spawnBoss() });
+  }
+
+  // Difficulty tier rises with elapsed run time (every ~22s).
+  private tier() {
+    return Math.floor(this.runTime / 22000);
   }
 
   protected addObjects(n: number) {
@@ -197,6 +240,7 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     const cx = width / 2;
     const cy = height / 2;
     const ring = Math.hypot(width, height) / 2 + 40;
+    const t = this.tier();
     for (let i = 0; i < n; i++) {
       const a = Phaser.Math.FloatBetween(0, Math.PI * 2);
       const e = this.enemies.create(
@@ -208,8 +252,9 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
       e.setScale(sc).setDepth(10);
       e.setLighting(true);
       e.setSelfShadow(true);
-      e.setData('speed', Phaser.Math.Between(35, 80));
-      e.setData('hp', 2);
+      // Strength scales with the run: tougher + faster spiders over time.
+      e.setData('speed', Phaser.Math.Between(35, 80) + t * 6);
+      e.setData('hp', 2 + t);
       e.setData('bs', sc);
       e.setData('ph', Phaser.Math.FloatBetween(0, 6.28));
     }
@@ -227,12 +272,15 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
       const dx = e.x - fromX;
       const dy = e.y - fromY;
       const d = Math.hypot(dx, dy) || 1;
-      e.setVelocity((dx / d) * 240, (dy / d) * 240);
-      e.setData('knock', 180); // brief window where steering is suppressed
+      const heavy = (e.getData('heavy') as number) ?? 0; // bosses barely flinch
+      const kb = heavy ? 40 : 240;
+      e.setVelocity((dx / d) * kb, (dy / d) * kb);
+      e.setData('knock', heavy ? 70 : 180); // window where steering is suppressed
     }
 
     const hp = ((e.getData('hp') as number) ?? 1) - dmg;
     if (hp <= 0) {
+      if (e.getData('special')) this.onSpecialKilled(e);
       this.dissolveEnemy(e);
     } else {
       e.setData('hp', hp);
@@ -386,6 +434,7 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     this.level += 1;
     this.xpToNext = Math.ceil(this.xpToNext * 1.4) + 2;
     this.regrade();
+    this.recolorLights();
     this.showLevelBanner();
     this.cameras.main.flash(160, 255, 240, 180);
     this.setSlow(0.3);
@@ -397,6 +446,119 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
         this.leveling = false;
       },
     });
+  }
+
+  // Cycle the arena edge lights to the next palette so the lighting keeps
+  // changing as you level (kept at the same intensities = same brightness).
+  private recolorLights() {
+    const pal = LIGHT_PALETTES[this.level % LIGHT_PALETTES.length]!;
+    this.edgeLights.forEach((l, i) => l.setColor(pal[i % pal.length]!));
+  }
+
+  // Spawn a named special foe (elite or boss): a big, tinted, glowing spider with
+  // a floating name + health bar. It joins the swarm and steers like the rest.
+  private spawnSpecial(opts: {
+    name: string;
+    scale: number;
+    hp: number;
+    speed: number;
+    color: number;
+    isBoss: boolean;
+  }) {
+    const { width, height } = this.scale;
+    const ring = Math.hypot(width, height) / 2 + 60;
+    const a = Phaser.Math.FloatBetween(0, Math.PI * 2);
+    const x = width / 2 + Math.cos(a) * ring;
+    const y = height / 2 + Math.sin(a) * ring;
+
+    const e = this.enemies.create(x, y, 'spider') as ArcadeImage;
+    e.setScale(opts.scale).setDepth(11).setTint(opts.color);
+    e.setLighting(true);
+    e.setSelfShadow(true);
+    e.setData('speed', opts.speed);
+    e.setData('hp', opts.hp);
+    e.setData('bs', opts.scale);
+    e.setData('ph', Phaser.Math.FloatBetween(0, 6.28));
+    e.setData('special', opts.isBoss ? 'boss' : 'elite');
+    e.setData('heavy', opts.isBoss ? 1 : 0);
+
+    const aura = this.add
+      .image(x, y, 'glow')
+      .setTint(opts.color)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setScale(opts.scale * 7)
+      .setAlpha(0.45)
+      .setDepth(9);
+    this.tweens.add({ targets: aura, alpha: 0.18, duration: 700, yoyo: true, repeat: -1 });
+
+    const label = this.add
+      .text(x, y, opts.name, {
+        fontFamily: 'Arial Black',
+        fontSize: opts.isBoss ? 18 : 13,
+        color: opts.isBoss ? '#ff5577' : '#ffcc66',
+        stroke: '#000',
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(33);
+    const bar = this.add.graphics().setDepth(33);
+
+    this.specials.push({ sprite: e, label, bar, aura, maxHp: opts.hp, isBoss: opts.isBoss, w: opts.isBoss ? 90 : 50 });
+    if (opts.isBoss) this.announceBoss(opts.name);
+  }
+
+  private spawnElite() {
+    const t = this.tier();
+    this.spawnSpecial({
+      name: ELITE_NAMES[Phaser.Math.Between(0, ELITE_NAMES.length - 1)]!,
+      scale: 0.24,
+      hp: 22 + t * 12,
+      speed: 30 + t * 3,
+      color: 0xff5a44,
+      isBoss: false,
+    });
+  }
+
+  private spawnBoss() {
+    const t = this.tier();
+    this.spawnSpecial({
+      name: BOSS_NAMES[Phaser.Math.Between(0, BOSS_NAMES.length - 1)]!,
+      scale: 0.44,
+      hp: 120 + t * 70,
+      speed: 22 + t * 2,
+      color: 0xb050ff,
+      isBoss: true,
+    });
+  }
+
+  // Killing a special is a payday: big juice + a shower of XP jewels.
+  private onSpecialKilled(e: ArcadeImage) {
+    this.juice(e.x, e.y, true);
+    const n = e.getData('special') === 'boss' ? 16 : 6;
+    for (let k = 0; k < n; k++) {
+      this.spawnJewel(e.x + Phaser.Math.Between(-32, 32), e.y + Phaser.Math.Between(-32, 32));
+    }
+  }
+
+  // Warn the player when a boss enters.
+  private announceBoss(name: string) {
+    const { width, height } = this.scale;
+    const t = this.add
+      .text(width / 2, height * 0.22, name + ' APPROACHES', {
+        fontFamily: 'Arial Black',
+        fontSize: 30,
+        color: '#ff4466',
+        stroke: '#000',
+        strokeThickness: 7,
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(61)
+      .setScale(0.5)
+      .setAlpha(0);
+    this.tweens.add({ targets: t, scale: 1, alpha: 1, duration: 300, ease: 'Back.easeOut' });
+    this.tweens.add({ targets: t, alpha: 0, y: height * 0.18, delay: 1300, duration: 500, onComplete: () => t.destroy() });
+    this.cameras.main.shake(300, 0.006);
   }
 
   // An XP jewel: a normal-mapped, lit gem sprite that ALSO carries its own light
@@ -462,6 +624,7 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
       this.hitstopT -= delta;
       if (this.hitstopT > 0) return;
     }
+    this.runTime += delta; // drives the difficulty ramp
     const dt = (delta / 1000) * this.slowScale;
     const nowSec = this.time.now / 1000;
     const px = this.player.x;
@@ -512,6 +675,28 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
       e.setScale(bs * (1 + 0.14 * s), bs * (1 - 0.1 * s));
     }
 
+    // Elites/bosses: follow with a name label, health bar, and glow aura.
+    for (let i = this.specials.length - 1; i >= 0; i--) {
+      const sp = this.specials[i]!;
+      const e = sp.sprite;
+      if (!e.active) {
+        sp.label.destroy();
+        sp.bar.destroy();
+        sp.aura.destroy();
+        this.specials.splice(i, 1);
+        continue;
+      }
+      sp.aura.setPosition(e.x, e.y);
+      const topY = e.y - e.displayHeight / 2 - 12;
+      sp.label.setPosition(e.x, topY);
+      const hp = Math.max(0, (e.getData('hp') as number) ?? 0);
+      const frac = sp.maxHp > 0 ? hp / sp.maxHp : 0;
+      const w = sp.w;
+      sp.bar.clear();
+      sp.bar.fillStyle(0x000000, 0.6).fillRect(e.x - w / 2, topY + 2, w, 5);
+      sp.bar.fillStyle(sp.isBoss ? 0xff3366 : 0xffaa33, 1).fillRect(e.x - w / 2, topY + 2, w * frac, 5);
+    }
+
     // XP jewels drift to the player (their light rides along), spinning so the
     // facets sparkle, and pop on pickup.
     const gemSpeed = 380 * dt;
@@ -547,6 +732,12 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     super.shutdown();
     for (const w of this.weapons) w.destroy();
     this.weapons = [];
+    for (const sp of this.specials) {
+      sp.label.destroy();
+      sp.bar.destroy();
+      sp.aura.destroy();
+    }
+    this.specials = [];
     for (const g of this.gems) {
       if (g.light) this.lights.removeLight(g.light);
       g.trail.destroy();
