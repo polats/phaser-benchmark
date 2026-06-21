@@ -32,6 +32,15 @@ const MAX_JEWEL_LIGHTS = 16; // cap real lights; extra jewels still glow (lit sp
 
 type Jewel = { sprite: GameObjects.Image; light: GameObjects.Light | null; trail: RibbonTrail };
 
+// Icons for the on-screen loadout strip (one per equipped weapon).
+const WEAPON_ICONS: Record<string, { tex: string; tint: number }> = {
+  bolt: { tex: 'glow', tint: 0xffe066 },
+  orbit: { tex: 'ball', tint: 0x66ffee },
+  nova: { tex: 'ring', tint: 0x88ccff },
+  ricochet: { tex: 'ring', tint: 0x66ffaa },
+  singularity: { tex: 'glow', tint: 0x9a44ff },
+};
+
 export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, GameState {
   protected readonly benchId = 'horde';
 
@@ -67,6 +76,8 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
   private slowScale = 1;
   private hitstopT = 0;
   private shockwave?: Phaser.Filters.Barrel;
+  private grade?: Phaser.Filters.ColorMatrix;
+  private loadoutBox: GameObjects.Container | undefined;
   private xpBar?: GameObjects.Graphics;
   private levelText?: GameObjects.Text;
 
@@ -98,30 +109,34 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     this.add
       .tileSprite(width / 2, height / 2, width, height, 'stones')
       .setLighting(true)
-      .setTint(0x9089ab)
-      .setAlpha(0.95)
-      .setDepth(-900);
+      .setDepth(-900); // natural brown stone, lit by the coloured edge lights
 
     // Cinematic post-FX: colour grade + bloom + vignette over the whole scene.
+    this.loadoutBox = undefined;
     this.cameras.main.filters.internal.clear();
-    applyCinematicFX(this.cameras.main);
+    this.grade = applyCinematicFX(this.cameras.main);
     // Barrel distortion held at rest (1 = none); pulsed as a screen-warp
     // shockwave when a Nova / Singularity goes off.
     this.shockwave = this.cameras.main.filters.internal.addBarrel(1);
 
-    // Ambient lifts the whole arena so it reads clearly; lights still add punch.
+    // Spiders-demo lighting: big coloured lights off each edge so the normal-
+    // mapped stone floor shows its brown texture with purple / green / warm
+    // tints toward the edges (low ambient lets the colours read).
     this.lights.enable();
-    this.lights.setAmbientColor(0x565272);
+    this.lights.setAmbientColor(0x232330);
+    const big = Math.max(width, height) * 2.6;
+    this.lights.addLight(-width * 0.3, -height * 0.3, big, 0x8844bb, 1); // purple top-left
+    this.lights.addLight(width * 0.6, -height * 0.6, big, 0x7788aa, 1); // cool top
+    this.lights.addLight(width * 1.3, height * 0.45, big, 0x44ff44, 1); // green right edge
+    this.lights.addLight(width * 0.3, height * 1.3, big, 0xffbb88, 1.3); // warm bottom
 
-    // Player: a bright orb with a self-illuminating glow + a real light that
-    // shades nearby spiders.
+    // Player: a bright orb with a self-illuminating glow.
     this.player = this.add.image(width / 2, height / 2, 'ball').setTint(0x66ddff).setScale(1.1).setDepth(18);
     this.playerLight = this.add.pointlight(width / 2, height / 2, 0x66d4ff, 180, 0.7).setDepth(4);
     this.tweens.add({ targets: this.playerLight, intensity: 0.45, duration: 700, yoyo: true, repeat: -1 });
-    this.lights.addLight(width / 2, height / 2, 470, 0xffe2b4, 2.6);
 
     // Light that follows the cursor (lifted off the surface for nicer shading).
-    this.mouseLight = this.lights.addLight(width / 2, height / 2, 360, 0xcfdcff, 3.4).setZNormal(0.5);
+    this.mouseLight = this.lights.addLight(width / 2, height / 2, 320, 0xddeeff, 3).setZNormal(0.5);
 
     // Cyan aura swirling off the player.
     this.aura = this.add
@@ -280,6 +295,66 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     const existing = this.weapons.find((w) => w.id === id);
     if (existing) existing.levelUp();
     else this.weapons.push(createWeapon(id, this));
+    this.rebuildLoadout();
+  }
+
+  // On-screen loadout strip: an icon + level for each equipped weapon.
+  private rebuildLoadout() {
+    const { width, height } = this.scale;
+    if (!this.loadoutBox) this.loadoutBox = this.add.container(0, 0).setScrollFactor(0).setDepth(42);
+    this.loadoutBox.removeAll(true);
+    const n = this.weapons.length;
+    const startX = width / 2 - ((n - 1) * 46) / 2;
+    const y = height - 26;
+    this.weapons.forEach((w, i) => {
+      const ic = WEAPON_ICONS[w.id] ?? { tex: 'glow', tint: 0xffffff };
+      const x = startX + i * 46;
+      const bg = this.add.circle(x, y, 17, 0x000000, 0.5);
+      const icon = this.add.image(x, y, ic.tex).setTint(ic.tint).setScale(0.65).setBlendMode(Phaser.BlendModes.ADD);
+      const lvl = this.add
+        .text(x + 13, y + 8, String(w.level), {
+          fontFamily: 'Arial Black',
+          fontSize: 12,
+          color: '#ffffff',
+          stroke: '#000',
+          strokeThickness: 3,
+        })
+        .setOrigin(0.5);
+      this.loadoutBox!.add([bg, icon, lvl]);
+    });
+  }
+
+  // Dynamic colour grade: more saturation/contrast + a warm hue push as the run
+  // escalates with level, so the palette intensifies over time.
+  private regrade() {
+    if (!this.grade) return;
+    const lv = Math.min(this.level, 14);
+    this.grade.colorMatrix.reset();
+    this.grade.colorMatrix
+      .saturate(0.2 + lv * 0.03, true)
+      .contrast(0.1 + lv * 0.012, true)
+      .hue(-lv * 2, true);
+  }
+
+  // A "LEVEL N" banner that pops + fades on level up.
+  private showLevelBanner() {
+    const { width, height } = this.scale;
+    const banner = this.add
+      .text(width / 2, height * 0.3, 'LEVEL ' + this.level, {
+        fontFamily: 'Arial Black',
+        fontSize: 46,
+        color: '#ffd166',
+        stroke: '#000',
+        strokeThickness: 8,
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(60)
+      .setScale(0.4)
+      .setAlpha(0);
+    this.tweens.add({ targets: banner, scale: 1.1, alpha: 1, duration: 200, ease: 'Back.easeOut' });
+    this.tweens.add({ targets: banner, alpha: 0, scale: 1.4, delay: 500, duration: 400, onComplete: () => banner.destroy() });
+    this.hitBurst.explode(24, width / 2, height * 0.3);
   }
   setSynergy(id: string) {
     this.synergies.add(id);
@@ -310,6 +385,8 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     this.xp -= this.xpToNext;
     this.level += 1;
     this.xpToNext = Math.ceil(this.xpToNext * 1.4) + 2;
+    this.regrade();
+    this.showLevelBanner();
     this.cameras.main.flash(160, 255, 240, 180);
     this.setSlow(0.3);
     this.scene.launch('CardSelect', {

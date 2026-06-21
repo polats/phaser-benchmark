@@ -58,10 +58,11 @@ export function applyVignette(camera: Phaser.Cameras.Scene2D.Camera) {
  * saturation + contrast), a soft bloom on bright areas (Glow), and a vignette.
  * One call ties all the additive glow/particles/lighting together.
  */
-export function applyCinematicFX(camera: Phaser.Cameras.Scene2D.Camera) {
+export function applyCinematicFX(camera: Phaser.Cameras.Scene2D.Camera): Phaser.Filters.ColorMatrix {
   const f = camera.filters.internal;
   const cm = f.addColorMatrix();
   cm.colorMatrix.saturate(0.2, true).contrast(0.1, true);
   f.addGlow(0xffffff, 3, 0, 1); // bloom-like radiance on bright pixels
   f.addVignette(0.5, 0.5, 0.92, 0.3); // soft, not crushing
+  return cm; // returned so the caller can re-grade dynamically (difficulty ramp)
 }
