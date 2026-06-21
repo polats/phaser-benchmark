@@ -1,61 +1,74 @@
 import * as Phaser from 'phaser';
-import type { GameObjects } from 'phaser';
+import type { GameObjects, Physics } from 'phaser';
 import { BenchScene } from './BenchScene';
 import { addGradientBackground } from '../lib/look';
 
-// "Horde" — a Vampire-Survivors-style bullet-heaven, used as a benchmark for the
-// thing those games lean on hardest: lots of moving sprites PLUS continuous
-// particle effects (additive explosions, bolt trails, pickup sparkles). The ramp
-// metric is the live enemy count; enemies accumulate and swarm the player while
-// auto-firing homing bolts pop against them with particle bursts.
+// "Horde" — a Vampire-Survivors-style bullet-heaven, used as a benchmark for what
+// horde games lean on hardest, all at once: many moving sprites, Arcade physics
+// (overlap hit-detection across the swarm), dynamic lighting on normal-mapped
+// sprites, AND continuous particle effects.
 //
-// (Vampire Survivors itself was originally built in Phaser.) Particle docs:
-// https://docs.phaser.io/phaser/concepts/gameobjects/particles
-type Enemy = GameObjects.Image & { speed?: number };
-type Bolt = { sprite: GameObjects.Image; target: Enemy; born: number };
+// Spiders (normal-mapped, lit) swarm the player from the dark; auto-fired bolts
+// fly straight and are tested against the swarm by Arcade `overlap`, bursting into
+// additive particles on contact. A point light follows the mouse (as in the
+// Creepy Crawly demo), so you can light up the swarm by moving the cursor.
+//
+// (Vampire Survivors itself was originally built in Phaser.)
+type ArcadeImage = Physics.Arcade.Image;
 
-const ENEMY_TINTS = [0xff5566, 0xc060ff, 0xff7733, 0xee4488];
-const SWARM_RADIUS = 70;
+const SWARM_RADIUS = 60;
 const MAX_BOLTS = 16;
-const HIT_RADIUS = 20;
+const BOLT_SPEED = 540;
 
 export class HordeBench extends BenchScene {
   protected readonly benchId = 'horde';
 
   private player!: GameObjects.Image;
   private playerLight!: GameObjects.PointLight;
-  private enemies: Enemy[] = [];
-  private bolts: Bolt[] = [];
+  private mouseLight!: GameObjects.Light;
+  private enemies!: Physics.Arcade.Group;
+  private bolts!: Physics.Arcade.Group;
   private gems: GameObjects.Image[] = [];
 
   private hitBurst!: GameObjects.Particles.ParticleEmitter;
   private trail!: GameObjects.Particles.ParticleEmitter;
   private aura!: GameObjects.Particles.ParticleEmitter;
   private fireEvent?: Phaser.Time.TimerEvent;
-  private clock = 0;
 
   constructor() {
-    super({ key: 'HordeBench' });
+    super({ key: 'HordeBench', physics: { arcade: { debug: false } } });
     this.targetFps = 50;
-    this.stepSize = 60;
-    this.maxCount = 30_000;
+    this.stepSize = 40;
+    this.maxCount = 20_000;
+  }
+
+  preload() {
+    // Normal-mapped spider (diffuse + _n) so the lights actually shade them.
+    this.load.image('spider', ['assets/normal-maps/spider.png', 'assets/normal-maps/spider_n.png']);
   }
 
   protected setup() {
     const { width, height } = this.scale;
-    this.enemies = [];
-    this.bolts = [];
     this.gems = [];
-    this.clock = 0;
 
-    addGradientBackground(this, '#241036', '#080510');
+    addGradientBackground(this, '#1a0f2e', '#06040c');
 
-    // Player at centre, with a pulsing point light for atmosphere.
+    // Low ambient so spiders read as silhouettes in the dark, then light up
+    // dramatically under the player + mouse lights.
+    this.lights.enable();
+    this.lights.setAmbientColor(0x2a2735);
+
+    // Player: a bright orb with a self-illuminating glow + a real light that
+    // shades nearby spiders.
     this.player = this.add.image(width / 2, height / 2, 'ball').setTint(0x66ddff).setScale(1.1).setDepth(18);
-    this.playerLight = this.add.pointlight(width / 2, height / 2, 0x55ccff, 160, 0.5).setDepth(4);
+    this.playerLight = this.add.pointlight(width / 2, height / 2, 0x55ccff, 150, 0.5).setDepth(4);
     this.tweens.add({ targets: this.playerLight, intensity: 0.3, duration: 700, yoyo: true, repeat: -1 });
+    this.lights.addLight(width / 2, height / 2, 380, 0xffdca8, 2);
 
-    // Cyan aura swirling off the player (additive).
+    // Light that follows the cursor (lifted off the surface for nicer shading).
+    this.mouseLight = this.lights.addLight(width / 2, height / 2, 300, 0xbbccff, 3).setZNormal(0.5);
+
+    // Cyan aura swirling off the player.
     this.aura = this.add
       .particles(0, 0, 'glow', {
         lifespan: 650,
@@ -69,7 +82,7 @@ export class HordeBench extends BenchScene {
       .setDepth(6);
     this.aura.startFollow(this.player);
 
-    // Faint additive bolt trails — one shared, pooled emitter we feed per frame.
+    // Additive bolt trails (shared pooled emitter, fed per frame).
     this.trail = this.add
       .particles(0, 0, 'glow', {
         lifespan: 240,
@@ -81,7 +94,7 @@ export class HordeBench extends BenchScene {
       })
       .setDepth(15);
 
-    // Fiery explosion burst, exploded on each bolt impact (colour ramp).
+    // Fiery impact burst.
     this.hitBurst = this.add
       .particles(0, 0, 'glow', {
         lifespan: 380,
@@ -94,13 +107,23 @@ export class HordeBench extends BenchScene {
       })
       .setDepth(22);
 
-    // Auto-attack: fire homing bolts at random enemies on a fixed cadence.
-    this.fireEvent = this.time.addEvent({
-      delay: 85,
-      loop: true,
-      callback: this.fire,
-      callbackScope: this,
+    this.enemies = this.physics.add.group();
+    this.bolts = this.physics.add.group();
+
+    // Physics decides what got hit: any bolt overlapping any spider.
+    this.physics.add.overlap(this.bolts, this.enemies, (boltObj, enemyObj) => {
+      const e = enemyObj as ArcadeImage;
+      const b = boltObj as ArcadeImage;
+      if (!e.active || !b.active) return;
+      this.hitBurst.explode(14, e.x, e.y);
+      if (Math.random() < 0.3) {
+        this.gems.push(this.add.image(e.x, e.y, 'star').setTint(0x66ffcc).setScale(0.5).setDepth(12));
+      }
+      e.destroy();
+      b.destroy();
     });
+
+    this.fireEvent = this.time.addEvent({ delay: 85, loop: true, callback: this.fire, callbackScope: this });
   }
 
   protected addObjects(n: number) {
@@ -110,85 +133,86 @@ export class HordeBench extends BenchScene {
     const ring = Math.hypot(width, height) / 2 + 40;
     for (let i = 0; i < n; i++) {
       const a = Phaser.Math.FloatBetween(0, Math.PI * 2);
-      const e = this.add
-        .image(cx + Math.cos(a) * ring, cy + Math.sin(a) * ring, 'ball')
-        .setScale(Phaser.Math.FloatBetween(0.4, 0.7))
-        .setTint(ENEMY_TINTS[i % ENEMY_TINTS.length]!)
-        .setDepth(10) as Enemy;
-      e.speed = Phaser.Math.Between(35, 80);
-      this.enemies.push(e);
+      const e = this.enemies.create(
+        cx + Math.cos(a) * ring,
+        cy + Math.sin(a) * ring,
+        'spider'
+      ) as ArcadeImage;
+      e.setScale(Phaser.Math.FloatBetween(0.08, 0.14)).setDepth(10);
+      e.setLighting(true);
+      e.setSelfShadow(true);
+      e.setData('speed', Phaser.Math.Between(35, 80));
     }
   }
 
   private fire() {
-    if (this.enemies.length === 0 || this.bolts.length >= MAX_BOLTS) return;
-    const target = this.enemies[Phaser.Math.Between(0, this.enemies.length - 1)]!;
-    const sprite = this.add
-      .image(this.player.x, this.player.y, 'glow')
-      .setTint(0xffee66)
-      .setScale(0.4)
-      .setBlendMode(Phaser.BlendModes.ADD)
-      .setDepth(16);
-    this.bolts.push({ sprite, target, born: this.clock });
-    this.hitBurst.explode(4, this.player.x, this.player.y); // muzzle flash
+    const kids = this.enemies.getChildren() as ArcadeImage[];
+    if (kids.length === 0 || this.bolts.getLength() >= MAX_BOLTS) return;
+
+    // Aim at the nearest spider's CURRENT position, then fly straight (no homing).
+    const px = this.player.x;
+    const py = this.player.y;
+    let target = kids[0]!;
+    let best = Infinity;
+    for (const e of kids) {
+      const dd = (e.x - px) * (e.x - px) + (e.y - py) * (e.y - py);
+      if (dd < best) {
+        best = dd;
+        target = e;
+      }
+    }
+
+    const b = this.bolts.create(px, py, 'glow') as ArcadeImage;
+    b.setTint(0xffee66).setScale(0.4).setBlendMode(Phaser.BlendModes.ADD).setDepth(16);
+    this.physics.moveToObject(b, target, BOLT_SPEED);
+    this.time.delayedCall(1300, () => {
+      if (b.active) b.destroy();
+    });
+    this.hitBurst.explode(4, px, py); // muzzle flash
   }
 
   protected override onUpdate(delta: number) {
     const dt = delta / 1000;
-    this.clock += delta;
     const px = this.player.x;
     const py = this.player.y;
 
-    // Enemies steer toward the player; once close they swirl around it.
-    for (const e of this.enemies) {
+    // Mouse-follow light (in world space).
+    const p = this.input.activePointer;
+    this.mouseLight.x = p.worldX;
+    this.mouseLight.y = p.worldY;
+
+    // Spiders steer toward the player (CPU cost scales with the swarm) and face
+    // their direction of travel — the sprite art points "down", a quarter turn
+    // above standard, so subtract PI/2.
+    const kids = this.enemies.getChildren() as ArcadeImage[];
+    for (const e of kids) {
       const dx = px - e.x;
       const dy = py - e.y;
       const d = Math.hypot(dx, dy) || 1;
-      const s = (e.speed ?? 60) * dt;
+      const sp = (e.getData('speed') as number) ?? 60;
       if (d > SWARM_RADIUS) {
-        e.x += (dx / d) * s;
-        e.y += (dy / d) * s;
+        e.setVelocity((dx / d) * sp, (dy / d) * sp);
       } else {
-        // tangential swirl + slight inward drift
-        e.x += (-dy / d) * s * 0.8 + (dx / d) * s * 0.1;
-        e.y += (dx / d) * s * 0.8 + (dy / d) * s * 0.1;
+        // swirl around the player instead of piling on top of it
+        e.setVelocity((-dy / d) * sp * 0.9, (dx / d) * sp * 0.9);
       }
+      e.rotation = Math.atan2(dy, dx) - Math.PI / 2;
     }
 
-    // Bolts home to their target, trail, and explode on impact.
-    const BOLT_SPEED = 520 * dt;
-    for (let i = this.bolts.length - 1; i >= 0; i--) {
-      const b = this.bolts[i]!;
-      const dx = b.target.x - b.sprite.x;
-      const dy = b.target.y - b.sprite.y;
-      const d = Math.hypot(dx, dy) || 1;
-      b.sprite.x += (dx / d) * BOLT_SPEED;
-      b.sprite.y += (dy / d) * BOLT_SPEED;
-      this.trail.emitParticleAt(b.sprite.x, b.sprite.y, 1);
-
-      if (d < HIT_RADIUS || this.clock - b.born > 1400) {
-        if (d < HIT_RADIUS) {
-          this.hitBurst.explode(14, b.target.x, b.target.y);
-          if (Math.random() < 0.3) {
-            this.gems.push(
-              this.add.image(b.target.x, b.target.y, 'star').setTint(0x66ffcc).setScale(0.5).setDepth(12)
-            );
-          }
-        }
-        b.sprite.destroy();
-        this.bolts.splice(i, 1);
-      }
+    // Bolt trails.
+    for (const b of this.bolts.getChildren() as ArcadeImage[]) {
+      this.trail.emitParticleAt(b.x, b.y, 1);
     }
 
     // XP gems drift to the player and sparkle on pickup.
-    const GEM_SPEED = 380 * dt;
+    const gemSpeed = 380 * dt;
     for (let i = this.gems.length - 1; i >= 0; i--) {
       const g = this.gems[i]!;
       const dx = px - g.x;
       const dy = py - g.y;
       const d = Math.hypot(dx, dy) || 1;
-      g.x += (dx / d) * GEM_SPEED;
-      g.y += (dy / d) * GEM_SPEED;
+      g.x += (dx / d) * gemSpeed;
+      g.y += (dy / d) * gemSpeed;
       if (d < 24) {
         this.hitBurst.explode(5, g.x, g.y);
         g.destroy();
@@ -200,8 +224,6 @@ export class HordeBench extends BenchScene {
   override shutdown() {
     super.shutdown();
     this.fireEvent?.remove();
-    this.enemies = [];
-    this.bolts = [];
     this.gems = [];
   }
 }
