@@ -5,6 +5,7 @@ import { addGradientBackground, applyCinematicFX } from '../lib/look';
 import { ensureRetroFont, RETRO_FONT_KEY } from '../lib/retroFont';
 import { type Upgrade, type ApplyHost, type GameState, buildChoices } from '../upgrades';
 import { type Weapon, type WeaponHost, createWeapon } from '../weapons';
+import { RibbonTrail } from '../lib/trail';
 
 // Floating damage numbers tween from white to gold as they rise.
 const DMG_WHITE = new Phaser.Display.Color(255, 255, 255);
@@ -29,7 +30,7 @@ const SWARM_RADIUS = 60;
 const JEWEL_COLORS = [0x66ffcc, 0xff66cc, 0xffd166, 0x88aaff, 0xff7755];
 const MAX_JEWEL_LIGHTS = 16; // cap real lights; extra jewels still glow (lit sprite)
 
-type Jewel = { sprite: GameObjects.Image; light: GameObjects.Light | null };
+type Jewel = { sprite: GameObjects.Image; light: GameObjects.Light | null; trail: RibbonTrail };
 
 export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, GameState {
   protected readonly benchId = 'horde';
@@ -328,7 +329,7 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
       light = this.lights.addLight(x, y, 110, col, 2.2);
       this.jewelLights++;
     }
-    this.gems.push({ sprite, light });
+    this.gems.push({ sprite, light, trail: new RibbonTrail(this, col, 5, 9, 11) });
   }
 
   // Floating combat text: rises, glows white -> gold, then shrinks and fades.
@@ -440,6 +441,7 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
       s.x += (dx / d) * gemSpeed;
       s.y += (dy / d) * gemSpeed;
       s.rotation += dt * 2;
+      g.trail.push(s.x, s.y);
       if (g.light) {
         g.light.x = s.x;
         g.light.y = s.y;
@@ -447,6 +449,7 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
       if (d < 24) {
         this.hitBurst.explode(6, s.x, s.y);
         s.destroy();
+        g.trail.destroy();
         if (g.light) {
           this.lights.removeLight(g.light);
           this.jewelLights--;
@@ -463,6 +466,7 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     this.weapons = [];
     for (const g of this.gems) {
       if (g.light) this.lights.removeLight(g.light);
+      g.trail.destroy();
     }
     this.gems = [];
     this.jewelLights = 0;

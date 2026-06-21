@@ -1,10 +1,19 @@
 import * as Phaser from 'phaser';
 import type { GameObjects, Physics } from 'phaser';
+import { RibbonTrail, tierColor } from './lib/trail';
 
 // Modular weapon system for the Horde roguelite. Each weapon owns its visuals,
 // cooldown, and hit logic, and reads shared player stats from the host scene.
-// Graphics-forward: additive glow, trails, expanding shockwaves.
+// Graphics-forward: additive glow, ribbon trails, expanding shockwaves. Weapons
+// also EVOLVE visually as they level (size + colour tier, see *_TIERS).
 export type Enemy = Physics.Arcade.Image;
+
+// Colour the weapon shifts through as it levels: cool → hot → gold.
+const BOLT_TIERS = [0xffee66, 0xffd166, 0xff9944, 0xff66cc];
+const ORBIT_TIERS = [0x66ffee, 0x88ddff, 0xbb99ff, 0xffe066];
+const NOVA_TIERS = [0x88ccff, 0x66ffee, 0xbb99ff, 0xffd166];
+const SING_TIERS = [0x9a44ff, 0xc488ff, 0xff66cc, 0xffd166];
+const RICO_TIERS = [0x66ffaa, 0x99ffcc, 0xffee66, 0xff88aa];
 
 // The slice of HordeBench a weapon needs. (It's a Phaser.Scene, so add/time/
 // physics/tweens are all available too.)
@@ -97,7 +106,10 @@ export class BoltWeapon extends Weapon {
         target = kids[Phaser.Math.Between(0, kids.length - 1)]!;
       }
       const b = this.bolts.create(px, py, 'glow') as Enemy;
-      b.setTint(0xffee66).setScale(0.4).setBlendMode(Phaser.BlendModes.ADD).setDepth(16);
+      b.setTint(tierColor(BOLT_TIERS, this.level))
+        .setScale(0.38 + this.level * 0.05)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDepth(16);
       this.host.physics.moveToObject(b, target, this.host.boltSpeed);
       this.host.time.delayedCall(1300, () => {
         if (b.active) b.destroy();
@@ -118,26 +130,25 @@ export class BoltWeapon extends Weapon {
 export class OrbitWeapon extends Weapon {
   readonly id = 'orbit';
   private orbs: GameObjects.Image[] = [];
+  private trails: RibbonTrail[] = [];
   private angle = 0;
   private synCd = 0;
 
   override update(delta: number) {
+    const tint = tierColor(ORBIT_TIERS, this.level);
+    const orbScale = 0.45 + this.level * 0.05;
+    const trailW = 4 + this.level;
     const want = 2 + this.level;
     while (this.orbs.length < want) {
-      const o = this.host.add
-        .image(0, 0, 'ball')
-        .setTint(0x66ffee)
-        .setScale(0.5)
-        .setBlendMode(Phaser.BlendModes.ADD)
-        .setDepth(17);
-      this.orbs.push(o);
+      this.orbs.push(this.host.add.image(0, 0, 'ball').setBlendMode(Phaser.BlendModes.ADD).setDepth(17));
+      this.trails.push(new RibbonTrail(this.host, tint, trailW, 10, 16));
     }
 
     const dt = delta / 1000;
     this.angle += dt * 2.4;
     const px = this.host.player.x;
     const py = this.host.player.y;
-    const radius = 86 + this.level * 4;
+    const radius = 86 + this.level * 6;
     const step = (Math.PI * 2) / this.orbs.length;
     const hitR2 = 30 * 30;
     const enemies = this.enemyList();
@@ -146,7 +157,13 @@ export class OrbitWeapon extends Weapon {
       const a = this.angle + step * i;
       o.x = px + Math.cos(a) * radius;
       o.y = py + Math.sin(a) * radius;
-      o.setScale(0.45 + 0.08 * Math.sin(this.angle * 4 + i));
+      o.setTint(tint).setScale(orbScale + 0.06 * Math.sin(this.angle * 4 + i));
+      const tr = this.trails[i];
+      if (tr) {
+        tr.setTint(tint);
+        tr.setWidth(trailW);
+        tr.push(o.x, o.y);
+      }
       for (const e of enemies) {
         if (!e.active) continue;
         const dx = e.x - o.x;
@@ -174,7 +191,9 @@ export class OrbitWeapon extends Weapon {
 
   override destroy() {
     for (const o of this.orbs) o.destroy();
+    for (const t of this.trails) t.destroy();
     this.orbs = [];
+    this.trails = [];
   }
 }
 
@@ -195,7 +214,7 @@ export class NovaWeapon extends Weapon {
 
     const ring = this.host.add
       .image(px, py, 'ring')
-      .setTint(0x88ccff)
+      .setTint(tierColor(NOVA_TIERS, this.level))
       .setBlendMode(Phaser.BlendModes.ADD)
       .setDepth(19)
       .setScale(0.2);
@@ -270,14 +289,14 @@ export class SingularityWeapon extends Weapon {
     const radius = 150 + this.level * 20;
     const core = this.host.add
       .image(seed.x, seed.y, 'glow')
-      .setTint(0x9a44ff)
+      .setTint(tierColor(SING_TIERS, this.level))
       .setBlendMode(Phaser.BlendModes.ADD)
       .setScale(0.6)
       .setDepth(20);
     this.host.tweens.add({ targets: core, scale: 1.4, duration: 1300, ease: 'Sine.easeInOut', yoyo: true });
     const ring = this.host.add
       .image(seed.x, seed.y, 'ring')
-      .setTint(0xc488ff)
+      .setTint(tierColor(SING_TIERS, this.level + 1))
       .setBlendMode(Phaser.BlendModes.ADD)
       .setDepth(20)
       .setScale(radius / 28);
@@ -302,6 +321,7 @@ export class RicochetWeapon extends Weapon {
   readonly id = 'ricochet';
   private bolts: Physics.Arcade.Group;
   private cd = 0;
+  private shots: { bolt: Enemy; trail: RibbonTrail }[] = [];
 
   constructor(host: WeaponHost) {
     super(host);
@@ -318,18 +338,32 @@ export class RicochetWeapon extends Weapon {
   }
 
   override update(delta: number) {
+    // Advance each bolt's ribbon trail; drop trails of expired bolts.
+    for (let i = this.shots.length - 1; i >= 0; i--) {
+      const sh = this.shots[i]!;
+      if (!sh.bolt.active) {
+        sh.trail.destroy();
+        this.shots.splice(i, 1);
+      } else {
+        sh.trail.push(sh.bolt.x, sh.bolt.y);
+      }
+    }
+
     this.cd -= delta;
     if (this.cd > 0) return;
     this.cd = Math.max(900, 2200 - (this.level - 1) * 220);
 
+    const tint = tierColor(RICO_TIERS, this.level);
+    const sc = 0.6 + this.level * 0.06;
     const count = 1 + Math.floor((this.level - 1) / 2);
     for (let i = 0; i < count; i++) {
       const a = Phaser.Math.FloatBetween(0, Math.PI * 2);
       const b = this.bolts.create(this.host.player.x, this.host.player.y, 'ring') as Enemy;
-      b.setTint(0x66ffaa).setScale(0.7).setBlendMode(Phaser.BlendModes.ADD).setDepth(17);
+      b.setTint(tint).setScale(sc).setBlendMode(Phaser.BlendModes.ADD).setDepth(17);
       b.setCollideWorldBounds(true);
       b.setBounce(1, 1);
       b.setVelocity(Math.cos(a) * 360, Math.sin(a) * 360);
+      this.shots.push({ bolt: b, trail: new RibbonTrail(this.host, tint, 3 + this.level, 12, 16) });
       this.host.time.delayedCall(3200, () => {
         if (b.active) b.destroy();
       });
@@ -337,6 +371,8 @@ export class RicochetWeapon extends Weapon {
   }
 
   override destroy() {
+    for (const sh of this.shots) sh.trail.destroy();
+    this.shots = [];
     this.bolts.destroy(true);
   }
 }
