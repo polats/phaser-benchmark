@@ -21,6 +21,11 @@ concurrency:
   group: devvit-deploy
   cancel-in-progress: false
 
+env:
+  # Subreddit to install/activate the uploaded version on (matches devvit.json
+  # `dev.subreddit`). Must be a sub the token's account moderates.
+  DEVVIT_SUBREDDIT: phaser_benchmark_dev
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -51,6 +56,19 @@ jobs:
           DEVVIT_DISABLE_METRICS: "1"
         # --just-do-it: non-interactive; auto-bumps the patch version.
         run: npx --no-install devvit upload --just-do-it
+
+      # `upload` only stores the new version (PRIVATE); it does NOT update what's
+      # running on the subreddit. Without this, posts keep serving the previously
+      # installed version. `install <subreddit>` (defaulting to latest) upgrades
+      # the existing install to the version we just uploaded (or exits cleanly if
+      # already current). It's non-interactive.
+      - name: Activate version on subreddit
+        env:
+          DEVVIT_AUTH_TOKEN: ${{ secrets.DEVVIT_AUTH_TOKEN }}
+          DEVVIT_DISABLE_METRICS: "1"
+        # No version arg → defaults to the app from devvit.json at `latest`,
+        # i.e. the version just uploaded above.
+        run: npx --no-install devvit install "${{ env.DEVVIT_SUBREDDIT }}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # One-time setup: add the DEVVIT_AUTH_TOKEN repository secret.
