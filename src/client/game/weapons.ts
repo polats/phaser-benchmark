@@ -21,6 +21,8 @@ export type WeaponHost = Phaser.Scene & {
   // Resolve a hit; (fromX, fromY) is the impact origin used for knockback.
   hitEnemy: (e: Enemy, fromX?: number, fromY?: number) => void;
   hasSynergy: (id: string) => boolean;
+  // Screen shake + light flash (+ hitstop on big) at a point — impact feel.
+  juice: (x: number, y: number, big: boolean) => void;
 };
 
 export abstract class Weapon {
@@ -206,6 +208,7 @@ export class NovaWeapon extends Weapon {
       onComplete: () => ring.destroy(),
     });
     this.host.hitBurst.explode(20, px, py);
+    this.host.juice(px, py, true);
 
     const r2 = radius * radius;
     for (const e of this.enemyList()) {
@@ -244,6 +247,7 @@ export class SingularityWeapon extends Weapon {
       }
       if (w.t <= 0) {
         this.host.hitBurst.explode(40, w.x, w.y);
+        this.host.juice(w.x, w.y, true);
         for (const e of this.enemyList()) {
           if (!e.active) continue;
           const dx = e.x - w.x;

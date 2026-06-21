@@ -1,7 +1,7 @@
 import * as Phaser from 'phaser';
 import type { GameObjects, Physics } from 'phaser';
 import { BenchScene } from './BenchScene';
-import { addGradientBackground } from '../lib/look';
+import { addGradientBackground, applyCinematicFX } from '../lib/look';
 import { ensureRetroFont, RETRO_FONT_KEY } from '../lib/retroFont';
 import { type Upgrade, type ApplyHost, type GameState, buildChoices } from '../upgrades';
 import { type Weapon, type WeaponHost, createWeapon } from '../weapons';
@@ -64,6 +64,7 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
   private xpToNext = 4;
   private leveling = false;
   private slowScale = 1;
+  private hitstopT = 0;
   private xpBar?: GameObjects.Graphics;
   private levelText?: GameObjects.Text;
 
@@ -79,6 +80,8 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
   preload() {
     // Normal-mapped spider (diffuse + _n) so the lights actually shade them.
     this.load.image('spider', ['assets/normal-maps/spider.png', 'assets/normal-maps/spider_n.png']);
+    // Normal-mapped stone floor for a lit, textured arena.
+    this.load.image('stones', ['assets/normal-maps/stones.png', 'assets/normal-maps/stones_n_standard.png']);
   }
 
   protected setup() {
@@ -88,6 +91,18 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     ensureRetroFont(this); // bitmap font for the floating damage numbers
 
     addGradientBackground(this, '#1a0f2e', '#06040c');
+    // Lit, normal-mapped stone floor — gives the arena real surface depth under
+    // the player + mouse lights instead of a flat gradient.
+    this.add
+      .tileSprite(width / 2, height / 2, width, height, 'stones')
+      .setLighting(true)
+      .setTint(0x6b6480)
+      .setAlpha(0.92)
+      .setDepth(-900);
+
+    // Cinematic post-FX: colour grade + bloom + vignette over the whole scene.
+    this.cameras.main.filters.internal.clear();
+    applyCinematicFX(this.cameras.main);
 
     // Low ambient so spiders read as silhouettes in the dark, then light up
     // dramatically under the player + mouse lights.
@@ -170,11 +185,14 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
         cy + Math.sin(a) * ring,
         'spider'
       ) as ArcadeImage;
-      e.setScale(Phaser.Math.FloatBetween(0.08, 0.14)).setDepth(10);
+      const sc = Phaser.Math.FloatBetween(0.08, 0.14);
+      e.setScale(sc).setDepth(10);
       e.setLighting(true);
       e.setSelfShadow(true);
       e.setData('speed', Phaser.Math.Between(35, 80));
       e.setData('hp', 2);
+      e.setData('bs', sc);
+      e.setData('ph', Phaser.Math.FloatBetween(0, 6.28));
     }
   }
 
@@ -196,12 +214,48 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
 
     const hp = ((e.getData('hp') as number) ?? 1) - dmg;
     if (hp <= 0) {
-      this.hitBurst.explode(this.burstCount, e.x, e.y);
-      if (Math.random() < this.jewelChance) this.spawnJewel(e.x, e.y);
-      e.destroy();
+      this.dissolveEnemy(e);
     } else {
       e.setData('hp', hp);
       this.hitBurst.explode(4, e.x, e.y); // small non-lethal spark
+    }
+  }
+
+  // Death "dissolve": detach from physics, then spin + shrink + fade out (plus
+  // the burst + jewel) instead of vanishing instantly.
+  private dissolveEnemy(e: ArcadeImage) {
+    this.hitBurst.explode(this.burstCount, e.x, e.y);
+    if (Math.random() < this.jewelChance) this.spawnJewel(e.x, e.y);
+    this.enemies.remove(e);
+    const body = e.body as Phaser.Physics.Arcade.Body | null;
+    if (body) body.enable = false;
+    this.tweens.add({
+      targets: e,
+      scaleX: 0,
+      scaleY: 0,
+      alpha: 0,
+      angle: e.angle + 160,
+      duration: 220,
+      ease: 'Quad.easeIn',
+      onComplete: () => e.destroy(),
+    });
+  }
+
+  // Impact feel (WeaponHost.juice): screen shake + a fading light flash, plus a
+  // brief hitstop + zoom punch on big hits (Nova / Singularity).
+  juice(x: number, y: number, big: boolean) {
+    this.cameras.main.shake(big ? 180 : 70, big ? 0.008 : 0.0035);
+    const pl = this.add.pointlight(x, y, 0xffffff, big ? 150 : 80, big ? 1.3 : 0.7).setDepth(25);
+    this.tweens.add({
+      targets: pl,
+      radius: big ? 340 : 170,
+      intensity: 0,
+      duration: big ? 260 : 150,
+      onComplete: () => pl.destroy(),
+    });
+    if (big) {
+      this.hitstopT = 55;
+      this.tweens.add({ targets: this.cameras.main, zoom: 1.04, duration: 70, yoyo: true });
     }
   }
 
@@ -319,7 +373,13 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
   }
 
   protected override onUpdate(delta: number) {
+    // Hitstop: freeze the sim for a few ms on big impacts (camera tweens still run).
+    if (this.hitstopT > 0) {
+      this.hitstopT -= delta;
+      if (this.hitstopT > 0) return;
+    }
     const dt = (delta / 1000) * this.slowScale;
+    const nowSec = this.time.now / 1000;
     const px = this.player.x;
     const py = this.player.y;
 
@@ -361,6 +421,11 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
         e.setVelocity((-dy / d) * sp * 0.9, (dx / d) * sp * 0.9);
       }
       e.rotation = Math.atan2(dy, dx) - Math.PI / 2;
+      // Scuttle: subtle squash/stretch fakes crawling legs (no spritesheet needed).
+      const bs = (e.getData('bs') as number) ?? 0.1;
+      const ph = (e.getData('ph') as number) ?? 0;
+      const s = Math.sin(nowSec * 14 + ph);
+      e.setScale(bs * (1 + 0.14 * s), bs * (1 - 0.1 * s));
     }
 
     // XP jewels drift to the player (their light rides along), spinning so the

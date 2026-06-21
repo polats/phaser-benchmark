@@ -52,3 +52,16 @@ export function addGradientBackground(
 export function applyVignette(camera: Phaser.Cameras.Scene2D.Camera) {
   camera.filters.internal.addVignette();
 }
+
+/**
+ * Cinematic post-processing stack for the game camera: a colour grade (punchier
+ * saturation + contrast), a soft bloom on bright areas (Glow), and a vignette.
+ * One call ties all the additive glow/particles/lighting together.
+ */
+export function applyCinematicFX(camera: Phaser.Cameras.Scene2D.Camera) {
+  const f = camera.filters.internal;
+  const cm = f.addColorMatrix();
+  cm.colorMatrix.saturate(0.2, true).contrast(0.1, true);
+  f.addGlow(0xffffff, 3, 0, 1); // bloom-like radiance on bright pixels
+  f.addVignette(0.5, 0.5, 0.78, 0.5);
+}
