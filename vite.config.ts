@@ -5,14 +5,12 @@ import { devvit } from '@devvit/start/vite';
 // devvit.json and wires the server build.
 //
 // React (the shell around Phaser in game.html) is compiled by Vite's built-in
-// esbuild using the `jsx`/`jsxImportSource` settings in tools/tsconfig.client.json
-// ("react-jsx" automatic runtime), so no extra React plugin is required. The
-// Devvit dev loop is `vite build --watch`, not a dev server, so Fast Refresh
-// (the main reason to add @vitejs/plugin-react) would not apply anyway.
+// transform using the `jsx`/`jsxImportSource` settings in tools/tsconfig.client.json
+// ("react-jsx" automatic runtime), which Vite reads from tsconfig automatically, so
+// no extra React plugin or explicit JSX config is required. The Devvit dev loop is
+// `vite build --watch`, not a dev server, so Fast Refresh (the main reason to add
+// @vitejs/plugin-react) would not apply anyway.
 export default defineConfig({
-  esbuild: {
-    jsx: 'automatic',
-  },
   plugins: [
     devvit({
       client: {
