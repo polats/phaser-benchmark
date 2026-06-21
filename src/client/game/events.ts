@@ -14,6 +14,8 @@ export const GameEvents = {
   Score: 'game-score',
   /** React -> FiltersBench: restrict the stacked filters to a chosen set. */
   FiltersConfig: 'filters-config',
+  /** React -> TextBench: switch the text rendering mode by index. */
+  TextMode: 'text-mode',
   /** React -> ShaderDemo: switch to a specific shader by index. */
   ShaderSelect: 'shader-select',
   /** ShaderDemo -> React: the active shader changed (tap or selection). */
@@ -44,6 +46,11 @@ export type ScorePayload = {
 export type FiltersConfigPayload = {
   /** Names of the filter types to stack, in cycle order. Empty = all of them. */
   filters: string[];
+};
+
+export type TextModeConfigPayload = {
+  /** Index into the TextBench mode list. */
+  index: number;
 };
 
 export type ShaderSelectPayload = {

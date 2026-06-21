@@ -16,15 +16,20 @@ import { GameEvents, type FiltersConfigPayload } from '../events';
 type FilterInternal = Cameras.Scene2D.Camera['filters']['internal'];
 type FilterOption = { name: string; apply: (f: FilterInternal) => void };
 
+// Each entry is one full-screen pass. Several built-ins are visual no-ops at
+// their defaults (barrel amount 1 = no distortion, ColorMatrix = identity,
+// pixelate amount ~1, bokeh/tilt-shift radius too small), so we pass explicit
+// parameters to make every filter visibly take effect while still costing a pass
+// for the fillrate measurement.
 export const FILTER_OPTIONS: FilterOption[] = [
-  { name: 'Blur', apply: (f) => void f.addBlur() },
-  { name: 'Glow', apply: (f) => void f.addGlow() },
+  { name: 'Blur', apply: (f) => void f.addBlur(1, 2, 2, 1) },
+  { name: 'Glow', apply: (f) => void f.addGlow(0x66ccff, 6, 0, 1) },
   { name: 'Vignette', apply: (f) => void f.addVignette() },
-  { name: 'Barrel', apply: (f) => void f.addBarrel() },
-  { name: 'ColorMatrix', apply: (f) => void f.addColorMatrix() },
-  { name: 'Bokeh', apply: (f) => void f.addBokeh() },
-  { name: 'TiltShift', apply: (f) => void f.addTiltShift() },
-  { name: 'Pixelate', apply: (f) => void f.addPixelate() },
+  { name: 'Barrel', apply: (f) => void f.addBarrel(0.6) },
+  { name: 'ColorMatrix', apply: (f) => void f.addColorMatrix().colorMatrix.sepia() },
+  { name: 'Bokeh', apply: (f) => void f.addBokeh(4, 1, 0.6) },
+  { name: 'TiltShift', apply: (f) => void f.addTiltShift(0.6, 1, 0.6, 1.4, 1.4, 1) },
+  { name: 'Pixelate', apply: (f) => void f.addPixelate(12) },
 ];
 
 /** Names exposed to the React HUD so it can render a toggle per filter. */
