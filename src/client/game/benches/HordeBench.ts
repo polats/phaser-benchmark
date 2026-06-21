@@ -68,7 +68,7 @@ type Special = {
 // Enemy archetypes. `face`: how it turns to the player — top-down sprites rotate,
 // side-view ones flip, blobs do neither. Animated kinds play a walk spritesheet;
 // the rest get the scuttle squash. The mix unlocks with the difficulty tier.
-type Behavior = 'swarm' | 'charger' | 'brute' | 'splitter';
+type Behavior = 'swarm' | 'charger' | 'brute' | 'splitter' | 'ranged';
 type EnemyKind = {
   key: string;
   tex: string;
@@ -86,15 +86,19 @@ type EnemyKind = {
   weight: number;
   split?: boolean;
 };
+// minTier is 0 for every kind, so the full variety spawns from the start; the
+// tier still scales each kind's HP/speed over time.
 const ENEMY_KINDS: EnemyKind[] = [
   // Spider — the basic swarmer (normal-mapped, top-down).
-  { key: 'spider', tex: 'spider', face: 'rotate', scale: 0.11, hpBase: 2, hpTier: 1, speedMin: 35, speedMax: 80, speedTier: 6, behavior: 'swarm', minTier: 0, weight: 50 },
+  { key: 'spider', tex: 'spider', face: 'rotate', scale: 0.11, hpBase: 2, hpTier: 1, speedMin: 35, speedMax: 80, speedTier: 6, behavior: 'swarm', minTier: 0, weight: 42 },
   // Alien — animated, fast charger.
-  { key: 'alien', tex: 'alien', anim: 'alien-walk', face: 'flip', scale: 0.7, hpBase: 2, hpTier: 1, speedMin: 70, speedMax: 110, speedTier: 7, behavior: 'charger', minTier: 1, weight: 22 },
+  { key: 'alien', tex: 'alien', anim: 'alien-walk', face: 'flip', scale: 0.7, hpBase: 2, hpTier: 1, speedMin: 70, speedMax: 110, speedTier: 7, behavior: 'charger', minTier: 0, weight: 20 },
   // Slime — splits into two minis on death.
-  { key: 'slime', tex: 'slime', face: 'none', scale: 0.6, tint: 0xbbffaa, hpBase: 3, hpTier: 1, speedMin: 30, speedMax: 55, speedTier: 4, behavior: 'splitter', minTier: 1, weight: 18, split: true },
+  { key: 'slime', tex: 'slime', face: 'none', scale: 0.6, tint: 0xbbffaa, hpBase: 3, hpTier: 1, speedMin: 30, speedMax: 55, speedTier: 4, behavior: 'splitter', minTier: 0, weight: 16, split: true },
   // Mummy — animated, slow brute with a fat HP pool.
-  { key: 'mummy', tex: 'mummy', anim: 'mummy-walk', face: 'flip', scale: 0.7, hpBase: 6, hpTier: 2, speedMin: 25, speedMax: 45, speedTier: 3, behavior: 'brute', minTier: 2, weight: 14 },
+  { key: 'mummy', tex: 'mummy', anim: 'mummy-walk', face: 'flip', scale: 0.7, hpBase: 6, hpTier: 2, speedMin: 25, speedMax: 45, speedTier: 3, behavior: 'brute', minTier: 0, weight: 12 },
+  // Spitter — keeps its distance and lobs glowing projectiles at the player.
+  { key: 'spitter', tex: 'alien', anim: 'alien-walk', face: 'flip', scale: 0.62, tint: 0xcc77ff, hpBase: 3, hpTier: 1, speedMin: 40, speedMax: 65, speedTier: 3, behavior: 'ranged', minTier: 0, weight: 12 },
 ];
 
 export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, GameState {
@@ -116,6 +120,7 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
   private specials: Special[] = [];
   private spawnAccum = 0; // fps-independent swarm top-up timer
   private introActive = false; // a boss/elite entrance cinematic is playing
+  private enemyShots!: Physics.Arcade.Group; // Spitter projectiles
 
   // UpgradeTarget — mutable player stats, changed by chosen upgrade cards.
   damage = 1;
@@ -260,6 +265,17 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     // Spiders physically jostle each other — the swarm is a real crowd.
     this.physics.add.collider(this.enemies, this.enemies);
 
+    // Spitter projectiles. The player gets a body so shots can "hit" it — for now
+    // that's a visual fizzle + flash (no player HP yet).
+    this.enemyShots = this.physics.add.group();
+    this.physics.add.existing(this.player);
+    this.physics.add.overlap(this.enemyShots, this.player, (p) => {
+      const pp = p as Physics.Arcade.Image;
+      this.hitBurst.explode(8, pp.x, pp.y);
+      this.cameras.main.flash(70, 120, 40, 80);
+      pp.destroy();
+    });
+
     // Weapons: start with the Plasma Bolt; upgrades add/level more.
     this.weapons = [];
     this.synergies.clear();
@@ -390,6 +406,16 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
       duration: 220,
       ease: 'Quad.easeIn',
       onComplete: () => e.destroy(),
+    });
+  }
+
+  // Spitter fires a glowing orb toward the player's current position.
+  private enemyShoot(e: ArcadeImage) {
+    const p = this.enemyShots.create(e.x, e.y, 'glow') as Physics.Arcade.Image;
+    p.setTint(0xcc66ff).setScale(0.5).setBlendMode(Phaser.BlendModes.ADD).setDepth(16);
+    this.physics.moveTo(p, this.player.x, this.player.y, 240);
+    this.time.delayedCall(3200, () => {
+      if (p.active) p.destroy();
     });
   }
 
@@ -805,8 +831,21 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
       const dy = py - e.y;
       const d = Math.hypot(dx, dy) || 1;
       const sp = (e.getData('speed') as number) ?? 60;
-      const brute = e.getData('behavior') === 'brute';
-      if (d > SWARM_RADIUS || brute) {
+      const behavior = (e.getData('behavior') as string) ?? 'swarm';
+      if (behavior === 'ranged') {
+        // Spitter: hold a preferred distance (back off / close in / strafe) and
+        // shoot on a cooldown.
+        const range = 250;
+        if (d < range * 0.8) e.setVelocity((-dx / d) * sp, (-dy / d) * sp);
+        else if (d > range * 1.2) e.setVelocity((dx / d) * sp, (dy / d) * sp);
+        else e.setVelocity((-dy / d) * sp * 0.7, (dx / d) * sp * 0.7);
+        let cd = ((e.getData('shootCd') as number) ?? 1200) - delta;
+        if (cd <= 0) {
+          cd = 1700 + Math.random() * 700;
+          this.enemyShoot(e);
+        }
+        e.setData('shootCd', cd);
+      } else if (d > SWARM_RADIUS || behavior === 'brute') {
         // brutes plod straight in; others swirl when close to avoid piling up
         e.setVelocity((dx / d) * sp, (dy / d) * sp);
       } else {
@@ -815,7 +854,7 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
       // Face the player: top-down sprites rotate, side-view sprites flip.
       const face = (e.getData('face') as string) ?? 'rotate';
       if (face === 'rotate') e.rotation = Math.atan2(dy, dx) - Math.PI / 2;
-      else if (face === 'flip') e.setFlipX(dx > 0);
+      else if (face === 'flip') e.setFlipX(dx < 0); // art faces right by default
       // Scuttle squash for non-animated kinds (animated ones play a walk anim).
       if (!e.getData('animated')) {
         const bs = (e.getData('bs') as number) ?? 0.1;
@@ -888,6 +927,7 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
       sp.aura.destroy();
     }
     this.specials = [];
+    this.enemyShots?.destroy(true);
     for (const g of this.gems) {
       if (g.light) this.lights.removeLight(g.light);
       g.trail.destroy();
