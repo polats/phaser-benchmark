@@ -1,0 +1,103 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0b1020;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+/* Phaser injects its <canvas> into this container. */
+#game-container {
+  position: absolute;
+  inset: 0;
+}
+
+#game-container canvas {
+  display: block;
+}
+
+/* React HUD overlays sit above the canvas but must not block game input
+   except where they have actual controls (pointer-events re-enabled per panel). */
+.hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  color: #f2f2f2;
+}
+
+.hud .panel {
+  pointer-events: auto;
+}
+
+.perf {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 6px 10px;
+  font:
+    12px/1.4 ui-monospace,
+    monospace;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 6px;
+  white-space: pre;
+}
+
+.bench-bar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 60%;
+  justify-content: flex-end;
+}
+
+.bench-bar button {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #0b1020;
+  background: #ffd166;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.bench-bar button.secondary {
+  color: #f2f2f2;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.leaderboard {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 6px;
+  min-width: 160px;
+}
+
+.leaderboard h3 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.leaderboard ol {
+  margin: 0;
+  padding-left: 18px;
+}
