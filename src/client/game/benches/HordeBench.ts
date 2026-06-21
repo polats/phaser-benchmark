@@ -65,6 +65,38 @@ type Special = {
   w: number;
 };
 
+// Enemy archetypes. `face`: how it turns to the player — top-down sprites rotate,
+// side-view ones flip, blobs do neither. Animated kinds play a walk spritesheet;
+// the rest get the scuttle squash. The mix unlocks with the difficulty tier.
+type Behavior = 'swarm' | 'charger' | 'brute' | 'splitter';
+type EnemyKind = {
+  key: string;
+  tex: string;
+  anim?: string;
+  face: 'rotate' | 'flip' | 'none';
+  scale: number;
+  tint?: number;
+  hpBase: number;
+  hpTier: number;
+  speedMin: number;
+  speedMax: number;
+  speedTier: number;
+  behavior: Behavior;
+  minTier: number;
+  weight: number;
+  split?: boolean;
+};
+const ENEMY_KINDS: EnemyKind[] = [
+  // Spider — the basic swarmer (normal-mapped, top-down).
+  { key: 'spider', tex: 'spider', face: 'rotate', scale: 0.11, hpBase: 2, hpTier: 1, speedMin: 35, speedMax: 80, speedTier: 6, behavior: 'swarm', minTier: 0, weight: 50 },
+  // Alien — animated, fast charger.
+  { key: 'alien', tex: 'alien', anim: 'alien-walk', face: 'flip', scale: 0.7, hpBase: 2, hpTier: 1, speedMin: 70, speedMax: 110, speedTier: 7, behavior: 'charger', minTier: 1, weight: 22 },
+  // Slime — splits into two minis on death.
+  { key: 'slime', tex: 'slime', face: 'none', scale: 0.6, tint: 0xbbffaa, hpBase: 3, hpTier: 1, speedMin: 30, speedMax: 55, speedTier: 4, behavior: 'splitter', minTier: 1, weight: 18, split: true },
+  // Mummy — animated, slow brute with a fat HP pool.
+  { key: 'mummy', tex: 'mummy', anim: 'mummy-walk', face: 'flip', scale: 0.7, hpBase: 6, hpTier: 2, speedMin: 25, speedMax: 45, speedTier: 3, behavior: 'brute', minTier: 2, weight: 14 },
+];
+
 export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, GameState {
   protected readonly benchId = 'horde';
 
@@ -126,6 +158,10 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     this.load.image('spider', ['assets/normal-maps/spider.png', 'assets/normal-maps/spider_n.png']);
     // Normal-mapped stone floor for a lit, textured arena.
     this.load.image('stones', ['assets/normal-maps/stones.png', 'assets/normal-maps/stones_n_standard.png']);
+    // Extra enemy types (Phaser examples assets): animated alien + mummy, slime.
+    this.load.spritesheet('alien', 'assets/sprites/metalslug_monster39x40.png', { frameWidth: 39, frameHeight: 40 });
+    this.load.spritesheet('mummy', 'assets/sprites/metalslug_mummy37x45.png', { frameWidth: 37, frameHeight: 45 });
+    this.load.image('slime', 'assets/sprites/slime.png');
   }
 
   protected setup() {
@@ -133,6 +169,24 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     this.gems = [];
     this.jewelLights = 0;
     ensureRetroFont(this); // bitmap font for the floating damage numbers
+
+    // Walk animations for the spritesheet enemy types (created once, global).
+    if (!this.anims.exists('alien-walk')) {
+      this.anims.create({
+        key: 'alien-walk',
+        frames: this.anims.generateFrameNumbers('alien', { start: 0, end: 15 }),
+        frameRate: 12,
+        repeat: -1,
+      });
+    }
+    if (!this.anims.exists('mummy-walk')) {
+      this.anims.create({
+        key: 'mummy-walk',
+        frames: this.anims.generateFrameNumbers('mummy', { start: 0, end: 17 }),
+        frameRate: 10,
+        repeat: -1,
+      });
+    }
 
     addGradientBackground(this, '#1a0f2e', '#06040c');
     // Lit, normal-mapped stone floor — gives the arena real surface depth under
@@ -245,28 +299,49 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     return Math.min(100, 38 + this.tier() * 6);
   }
 
-  // Spawn one spider at the edge ring, scaled in strength by the current tier.
-  private spawnSpider() {
+  // Weighted pick among the enemy kinds unlocked at the current tier.
+  private pickKind(): EnemyKind {
+    const t = this.tier();
+    const pool = ENEMY_KINDS.filter((k) => t >= k.minTier);
+    let total = 0;
+    for (const k of pool) total += k.weight;
+    let r = Phaser.Math.FloatBetween(0, total);
+    for (const k of pool) {
+      r -= k.weight;
+      if (r <= 0) return k;
+    }
+    return pool[0]!;
+  }
+
+  // Spawn one enemy of a tier-appropriate kind at the edge ring.
+  private spawnEnemy() {
     const { width, height } = this.scale;
     const ring = Math.hypot(width, height) / 2 + 40;
     const t = this.tier();
+    const k = this.pickKind();
     const a = Phaser.Math.FloatBetween(0, Math.PI * 2);
-    const e = this.enemies.create(width / 2 + Math.cos(a) * ring, height / 2 + Math.sin(a) * ring, 'spider') as ArcadeImage;
-    const sc = Phaser.Math.FloatBetween(0.08, 0.14);
+    const e = this.enemies.create(width / 2 + Math.cos(a) * ring, height / 2 + Math.sin(a) * ring, k.tex) as Physics.Arcade.Sprite;
+    const sc = k.scale * Phaser.Math.FloatBetween(0.85, 1.15);
     e.setScale(sc).setDepth(10);
     e.setLighting(true);
-    e.setSelfShadow(true);
-    e.setData('speed', Phaser.Math.Between(35, 80) + t * 6);
-    e.setData('hp', 2 + t);
+    if (k.tex === 'spider') e.setSelfShadow(true); // only the normal-mapped one
+    if (k.tint !== undefined) e.setTint(k.tint);
+    if (k.anim) e.play(k.anim);
+    e.setData('speed', Phaser.Math.Between(k.speedMin, k.speedMax) + t * k.speedTier);
+    e.setData('hp', k.hpBase + t * k.hpTier);
     e.setData('bs', sc);
     e.setData('ph', Phaser.Math.FloatBetween(0, 6.28));
+    e.setData('behavior', k.behavior);
+    e.setData('face', k.face);
+    e.setData('animated', k.anim ? 1 : 0);
+    if (k.split) e.setData('split', 1);
   }
 
   // Top up the swarm toward the cap (never past it), so the count stays sane.
   protected addObjects(n: number) {
     const room = this.swarmCap() - this.enemies.getLength();
     const k = Math.max(0, Math.min(n, room));
-    for (let i = 0; i < k; i++) this.spawnSpider();
+    for (let i = 0; i < k; i++) this.spawnEnemy();
   }
 
   // Resolve a hit on a spider (WeaponHost): damage number, physics knockback
@@ -302,6 +377,7 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
   private dissolveEnemy(e: ArcadeImage) {
     this.hitBurst.explode(this.burstCount, e.x, e.y);
     if (Math.random() < this.jewelChance) this.spawnJewel(e.x, e.y);
+    if (e.getData('split')) this.splitSlime(e);
     this.enemies.remove(e);
     const body = e.body as Phaser.Physics.Arcade.Body | null;
     if (body) body.enable = false;
@@ -315,6 +391,27 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
       ease: 'Quad.easeIn',
       onComplete: () => e.destroy(),
     });
+  }
+
+  // A dying slime bursts into two smaller, weaker slimes (which don't split).
+  private splitSlime(e: ArcadeImage) {
+    const t = this.tier();
+    for (let i = 0; i < 2; i++) {
+      const m = this.enemies.create(
+        e.x + Phaser.Math.Between(-14, 14),
+        e.y + Phaser.Math.Between(-14, 14),
+        'slime'
+      ) as Physics.Arcade.Sprite;
+      const sc = 0.32 * Phaser.Math.FloatBetween(0.85, 1.15);
+      m.setScale(sc).setDepth(10).setTint(0x99ee88);
+      m.setLighting(true);
+      m.setData('speed', Phaser.Math.Between(55, 85) + t * 4);
+      m.setData('hp', 1 + Math.floor(t / 2));
+      m.setData('bs', sc);
+      m.setData('ph', Phaser.Math.FloatBetween(0, 6.28));
+      m.setData('behavior', 'swarm');
+      m.setData('face', 'none');
+    }
   }
 
   // Impact feel (WeaponHost.juice): screen shake + a fading light flash, plus a
@@ -708,18 +805,24 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
       const dy = py - e.y;
       const d = Math.hypot(dx, dy) || 1;
       const sp = (e.getData('speed') as number) ?? 60;
-      if (d > SWARM_RADIUS) {
+      const brute = e.getData('behavior') === 'brute';
+      if (d > SWARM_RADIUS || brute) {
+        // brutes plod straight in; others swirl when close to avoid piling up
         e.setVelocity((dx / d) * sp, (dy / d) * sp);
       } else {
-        // swirl around the player instead of piling on top of it
         e.setVelocity((-dy / d) * sp * 0.9, (dx / d) * sp * 0.9);
       }
-      e.rotation = Math.atan2(dy, dx) - Math.PI / 2;
-      // Scuttle: subtle squash/stretch fakes crawling legs (no spritesheet needed).
-      const bs = (e.getData('bs') as number) ?? 0.1;
-      const ph = (e.getData('ph') as number) ?? 0;
-      const s = Math.sin(nowSec * 14 + ph);
-      e.setScale(bs * (1 + 0.14 * s), bs * (1 - 0.1 * s));
+      // Face the player: top-down sprites rotate, side-view sprites flip.
+      const face = (e.getData('face') as string) ?? 'rotate';
+      if (face === 'rotate') e.rotation = Math.atan2(dy, dx) - Math.PI / 2;
+      else if (face === 'flip') e.setFlipX(dx > 0);
+      // Scuttle squash for non-animated kinds (animated ones play a walk anim).
+      if (!e.getData('animated')) {
+        const bs = (e.getData('bs') as number) ?? 0.1;
+        const ph = (e.getData('ph') as number) ?? 0;
+        const s = Math.sin(nowSec * 14 + ph);
+        e.setScale(bs * (1 + 0.14 * s), bs * (1 - 0.1 * s));
+      }
     }
 
     // Elites/bosses: follow with a name label, health bar, and glow aura.
