@@ -12,6 +12,12 @@ export const GameEvents = {
   BenchDone: 'bench-done',
   /** The core gameplay demo reported a score. */
   Score: 'game-score',
+  /** React -> FiltersBench: restrict the stacked filters to a chosen set. */
+  FiltersConfig: 'filters-config',
+  /** React -> ShaderDemo: switch to a specific shader by index. */
+  ShaderSelect: 'shader-select',
+  /** ShaderDemo -> React: the active shader changed (tap or selection). */
+  ShaderChanged: 'shader-changed',
 } as const;
 
 export type SceneReadyPayload = Scene;
@@ -33,4 +39,19 @@ export type BenchDonePayload = {
 
 export type ScorePayload = {
   score: number;
+};
+
+export type FiltersConfigPayload = {
+  /** Names of the filter types to stack, in cycle order. Empty = all of them. */
+  filters: string[];
+};
+
+export type ShaderSelectPayload = {
+  /** Index into the ShaderDemo shader list. */
+  index: number;
+};
+
+export type ShaderChangedPayload = {
+  index: number;
+  name: string;
 };

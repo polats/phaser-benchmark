@@ -1,5 +1,7 @@
 import { Scene, type GameObjects } from 'phaser';
 import { startBenchReadout } from './fpsReadout';
+import { EventBus } from '../EventBus';
+import { GameEvents, type ShaderSelectPayload } from '../events';
 
 // Custom-GLSL shader showcase + fillrate benchmark. Phaser 4 renders a full-screen
 // fragment shader via `this.add.shader()` (a ShaderQuad), driven by `uTime` /
@@ -119,6 +121,10 @@ void main(void){
   },
 ];
 
+/** Lightweight catalog exposed to the React HUD so it can render one button per
+ * shader (the GLSL source itself stays in this module). */
+export const SHADER_OPTIONS = SHADERS.map(({ name, heavy }) => ({ name, heavy }));
+
 export class ShaderDemo extends Scene {
   private shader?: GameObjects.Shader;
   private label!: GameObjects.Text;
@@ -147,13 +153,33 @@ export class ShaderDemo extends Scene {
 
     // Tap / click anywhere to cycle to the next shader.
     this.input.on('pointerdown', () => {
-      this.index = (this.index + 1) % SHADERS.length;
-      this.build();
-      this.updateLabel();
+      this.setIndex((this.index + 1) % SHADERS.length);
     });
+
+    // The React HUD can jump straight to a specific shader.
+    EventBus.on(GameEvents.ShaderSelect, this.onSelect, this);
 
     this.scale.on('resize', this.onResize, this);
     startBenchReadout(this, 'demo-shader', this.index + 1);
+    this.emitChanged();
+  }
+
+  private onSelect(payload: ShaderSelectPayload) {
+    if (payload.index >= 0 && payload.index < SHADERS.length) {
+      this.setIndex(payload.index);
+    }
+  }
+
+  private setIndex(index: number) {
+    if (index === this.index) return;
+    this.index = index;
+    this.build();
+    this.updateLabel();
+    this.emitChanged();
+  }
+
+  private emitChanged() {
+    EventBus.emit(GameEvents.ShaderChanged, { index: this.index, name: SHADERS[this.index]!.name });
   }
 
   private build() {
@@ -194,5 +220,6 @@ export class ShaderDemo extends Scene {
 
   shutdown() {
     this.scale.off('resize', this.onResize, this);
+    EventBus.off(GameEvents.ShaderSelect, this.onSelect, this);
   }
 }

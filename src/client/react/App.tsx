@@ -3,6 +3,7 @@ import type { Scene } from 'phaser';
 import { PhaserGame, type PhaserGameHandle } from './PhaserGame';
 import { PerfHud } from './components/PerfHud';
 import { BenchMenu } from './components/BenchMenu';
+import { BenchControls } from './components/BenchControls';
 import { Leaderboard } from './components/Leaderboard';
 import { EventBus } from '../game/EventBus';
 import {
@@ -122,6 +123,7 @@ export function App() {
           onHome={() => switchScene(HOME_SCENE_KEY)}
         />
         {isBench ? <PerfHud perf={perf} done={done} /> : null}
+        <BenchControls activeKey={activeSceneKey} />
         {!isBench ? (
           <Leaderboard entries={entries} username={username} bestScore={bestScore} />
         ) : null}
