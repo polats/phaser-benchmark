@@ -57,6 +57,20 @@ containers. **Note:** the *first* upload of a brand-new app name may still need
 one interactive `devvit upload` (anywhere with a browser) to register the global
 name; after that, container deploys are fully headless.
 
+## Standalone web playground (Vercel)
+
+The game also runs as a **plain browser app** (benchmarks + demos, with a mocked
+`/api`) — handy for sharing a public link without Reddit. `npm run build:web`
+produces a static `dist-web/`, the `/api/*` mock ships as Vercel serverless
+functions in `api/`, and `.github/workflows/vercel.yml` deploys it.
+
+It needs three **Vercel** secrets (a Vercel token — *not* your GitHub PAT):
+`VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` (run `npx vercel link` once
+to get the IDs). Or just import the repo at [vercel.com/new](https://vercel.com/new)
+and Vercel auto-deploys via `vercel.json` — then delete the workflow. Setup notes
+are in the workflow file. (This is *not* the Reddit app — that deploys to Devvit
+via `deploy.yml`.)
+
 ## How it works
 
 Reddit shows two views of a Devvit post, both declared in `devvit.json`:

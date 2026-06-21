@@ -1,0 +1,15 @@
+// Vercel mock of /api/score. Stateless: echoes the submitted score back as the
+// "best". On Vercel functions can't share memory, so there's no real persistence —
+// that's fine for the playground (real persistence lives in the Devvit server).
+export default function handler(req, res) {
+  let body = req.body;
+  if (typeof body === 'string') {
+    try {
+      body = JSON.parse(body);
+    } catch {
+      body = {};
+    }
+  }
+  const score = Number(body?.score) || 0;
+  res.status(200).json({ type: 'score', postId: 'web', bestScore: score, rank: 1 });
+}
