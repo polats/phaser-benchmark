@@ -2,6 +2,11 @@ import * as Phaser from 'phaser';
 import type { GameObjects, Physics } from 'phaser';
 import { BenchScene } from './BenchScene';
 import { addGradientBackground } from '../lib/look';
+import { ensureRetroFont, RETRO_FONT_KEY } from '../lib/retroFont';
+
+// Floating damage numbers tween from white to gold as they rise.
+const DMG_WHITE = new Phaser.Display.Color(255, 255, 255);
+const DMG_GOLD = new Phaser.Display.Color(255, 208, 0);
 
 // "Horde" — a Vampire-Survivors-style bullet-heaven, used as a benchmark for what
 // horde games lean on hardest, all at once: many moving sprites, Arcade physics
@@ -36,6 +41,7 @@ export class HordeBench extends BenchScene {
   private bolts!: Physics.Arcade.Group;
   private gems: Jewel[] = [];
   private jewelLights = 0;
+  private damage = 1; // base hit damage (grows once the level-up loop lands)
 
   private hitBurst!: GameObjects.Particles.ParticleEmitter;
   private trail!: GameObjects.Particles.ParticleEmitter;
@@ -58,6 +64,7 @@ export class HordeBench extends BenchScene {
     const { width, height } = this.scale;
     this.gems = [];
     this.jewelLights = 0;
+    ensureRetroFont(this); // bitmap font for the floating damage numbers
 
     addGradientBackground(this, '#1a0f2e', '#06040c');
 
@@ -124,6 +131,8 @@ export class HordeBench extends BenchScene {
       const b = boltObj as ArcadeImage;
       if (!e.active || !b.active) return;
       this.hitBurst.explode(14, e.x, e.y);
+      const crit = Math.random() < 0.12;
+      this.spawnDamageText(e.x, e.y, crit ? this.damage * 3 : this.damage, crit);
       if (Math.random() < 0.3) this.spawnJewel(e.x, e.y);
       e.destroy();
       b.destroy();
@@ -191,6 +200,37 @@ export class HordeBench extends BenchScene {
       this.jewelLights++;
     }
     this.gems.push({ sprite, light });
+  }
+
+  // Floating combat text: rises, glows white -> gold, then shrinks and fades.
+  // Uses batched BitmapText so hundreds can be on screen cheaply.
+  private spawnDamageText(x: number, y: number, amount: number, crit: boolean) {
+    const base = crit ? 1.5 : 1;
+    const txt = this.add
+      .bitmapText(x, y, RETRO_FONT_KEY, String(amount), crit ? 26 : 18)
+      .setOrigin(0.5)
+      .setTint(0xffffff)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(30);
+    this.tweens.add({ targets: txt, y: y - 52, duration: 620, ease: 'Quad.easeOut' });
+    this.tweens.addCounter({
+      from: 0,
+      to: 1,
+      duration: 620,
+      onUpdate: (tw) => {
+        const t = tw.getValue() ?? 0;
+        const c = Phaser.Display.Color.Interpolate.ColorWithColor(
+          DMG_WHITE,
+          DMG_GOLD,
+          100,
+          Math.round(t * 100)
+        );
+        txt.setTint(Phaser.Display.Color.GetColor(c.r, c.g, c.b));
+        txt.setScale(base * (t < 0.6 ? 1 : 1 - ((t - 0.6) / 0.4) * 0.5)); // shrink late
+        txt.setAlpha(t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3);
+      },
+      onComplete: () => txt.destroy(),
+    });
   }
 
   protected override onUpdate(delta: number) {
