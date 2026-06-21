@@ -17,19 +17,29 @@ type FilterInternal = Cameras.Scene2D.Camera['filters']['internal'];
 type FilterOption = { name: string; apply: (f: FilterInternal) => void };
 
 // Each entry is one full-screen pass. Several built-ins are visual no-ops at
-// their defaults (barrel amount 1 = no distortion, ColorMatrix = identity,
-// pixelate amount ~1, bokeh/tilt-shift radius too small), so we pass explicit
-// parameters to make every filter visibly take effect while still costing a pass
-// for the fillrate measurement.
+// their defaults (barrel amount 1 = no distortion, ColorMatrix = identity), so
+// we pass explicit parameters so each filter visibly takes effect.
+//
+// Notes on the awkward ones:
+//   - Pixelate's block size is `2 + amount` in *framebuffer* pixels, so a fixed
+//     amount is nearly invisible on a high-DPR mobile webview. We scale it by
+//     devicePixelRatio for a consistent on-screen block size.
+//   - Bokeh and TiltShift share a shader that outputs alpha 0 in Phaser 4.2.0
+//     (they render a fully transparent pass — effectively invisible), so they're
+//     omitted here in favour of Shadow and Threshold, which work and are visually
+//     distinct.
 export const FILTER_OPTIONS: FilterOption[] = [
   { name: 'Blur', apply: (f) => void f.addBlur(1, 2, 2, 1) },
   { name: 'Glow', apply: (f) => void f.addGlow(0x66ccff, 6, 0, 1) },
   { name: 'Vignette', apply: (f) => void f.addVignette() },
   { name: 'Barrel', apply: (f) => void f.addBarrel(0.6) },
   { name: 'ColorMatrix', apply: (f) => void f.addColorMatrix().colorMatrix.sepia() },
-  { name: 'Bokeh', apply: (f) => void f.addBokeh(4, 1, 0.6) },
-  { name: 'TiltShift', apply: (f) => void f.addTiltShift(0.6, 1, 0.6, 1.4, 1.4, 1) },
-  { name: 'Pixelate', apply: (f) => void f.addPixelate(12) },
+  { name: 'Shadow', apply: (f) => void f.addShadow(8, 8) },
+  { name: 'Threshold', apply: (f) => void f.addThreshold(0.5, 0.6) },
+  {
+    name: 'Pixelate',
+    apply: (f) => void f.addPixelate(Math.round(14 * (globalThis.devicePixelRatio || 1))),
+  },
 ];
 
 /** Names exposed to the React HUD so it can render a toggle per filter. */
