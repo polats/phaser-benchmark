@@ -142,8 +142,62 @@ function star(scene: Scene, key: string, radius: number) {
   register(scene, key, dc);
 }
 
+// A faceted "brilliant cut" gem: a flat central table surrounded by radial
+// facets, each a flat plane tilted outward. Its NORMAL MAP makes every facet
+// catch the light from a different angle, so the jewel sparkles as lights move —
+// the same normal-map lighting trick the spider sprite uses, just generated.
+function jewel(scene: Scene, key: string, radius: number, sides: number) {
+  const D = radius * 2;
+  const { canvas: dc, ctx } = makeCanvas(D);
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(radius, radius, radius, 0, Math.PI * 2);
+  ctx.fill();
+  // Faint facet edges for definition (kept subtle so tint stays clean).
+  ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < sides; i++) {
+    const a = ((Math.PI * 2) / sides) * i;
+    ctx.beginPath();
+    ctx.moveTo(radius, radius);
+    ctx.lineTo(radius + Math.cos(a) * radius, radius + Math.sin(a) * radius);
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.arc(radius, radius, radius * 0.4, 0, Math.PI * 2);
+  ctx.stroke();
+
+  const { canvas: nc, ctx: nctx } = makeCanvas(D);
+  const img = nctx.createImageData(D, D);
+  const tableR = radius * 0.4;
+  const seg = (Math.PI * 2) / sides;
+  for (let y = 0; y < D; y++) {
+    for (let x = 0; x < D; x++) {
+      const i = (y * D + x) * 4;
+      const nx = x - radius + 0.5;
+      const ny = y - radius + 0.5;
+      const r = Math.hypot(nx, ny);
+      if (r > radius) {
+        img.data[i + 3] = 0;
+      } else if (r < tableR) {
+        encodeNormal(img.data, i, 0, 0, 1); // flat top table
+      } else {
+        // Snap the angle to the nearest facet centre → a flat tilted plane.
+        const facet = Math.round(Math.atan2(ny, nx) / seg) * seg;
+        const tilt = 0.75;
+        const fx = Math.cos(facet) * tilt;
+        const fy = Math.sin(facet) * tilt;
+        encodeNormal(img.data, i, fx, fy, Math.sqrt(Math.max(0.05, 1 - fx * fx - fy * fy)));
+      }
+    }
+  }
+  nctx.putImageData(img, 0, 0);
+  register(scene, key, dc, nc);
+}
+
 /** Generate every texture the template uses. Call once in Boot. */
 export function createTextures(scene: Scene) {
+  jewel(scene, 'jewel', 22, 8);
   sphere(scene, 'ball', 24);
   sphere(scene, 'dot', 10);
   roundedBox(scene, 'box', 40, 8, 8);

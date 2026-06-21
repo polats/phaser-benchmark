@@ -19,7 +19,7 @@ import { BunnyBounceDemo } from './demos/BunnyBounceDemo';
 import { ShaderDemo } from './demos/ShaderDemo';
 
 // The scene the "Home" button returns to (the title screen).
-export const HOME_SCENE_KEY = 'MainMenu';
+export const HOME_SCENE_KEY = 'HordeBench';
 
 // Base design resolution. Scale.RESIZE keeps the canvas filling the Reddit
 // webview (which has a variable size on mobile vs desktop) while scenes lay
@@ -35,7 +35,7 @@ const config: Types.Core.GameConfig = {
   },
   // Enable Phaser 4 lighting: allow many simultaneous lights and self-shadows.
   render: {
-    maxLights: 40,
+    maxLights: 64,
     selfShadow: true,
   },
   // Physics systems are enabled per-scene (see each Bench*.ts) so scenes that

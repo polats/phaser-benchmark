@@ -14,6 +14,7 @@ export class Preloader extends Scene {
   }
 
   create() {
-    this.scene.start('MainMenu');
+    // Horde is the default landing scene (the headline showcase).
+    this.scene.start('HordeBench');
   }
 }

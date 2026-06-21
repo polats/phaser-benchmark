@@ -19,6 +19,12 @@ type ArcadeImage = Physics.Arcade.Image;
 const SWARM_RADIUS = 60;
 const MAX_BOLTS = 16;
 const BOLT_SPEED = 540;
+// XP jewels are normal-mapped + lit (like the spiders) AND carry their own
+// light, so they sparkle and illuminate the swarm as they fly to the player.
+const JEWEL_COLORS = [0x66ffcc, 0xff66cc, 0xffd166, 0x88aaff, 0xff7755];
+const MAX_JEWEL_LIGHTS = 16; // cap real lights; extra jewels still glow (lit sprite)
+
+type Jewel = { sprite: GameObjects.Image; light: GameObjects.Light | null };
 
 export class HordeBench extends BenchScene {
   protected readonly benchId = 'horde';
@@ -28,7 +34,8 @@ export class HordeBench extends BenchScene {
   private mouseLight!: GameObjects.Light;
   private enemies!: Physics.Arcade.Group;
   private bolts!: Physics.Arcade.Group;
-  private gems: GameObjects.Image[] = [];
+  private gems: Jewel[] = [];
+  private jewelLights = 0;
 
   private hitBurst!: GameObjects.Particles.ParticleEmitter;
   private trail!: GameObjects.Particles.ParticleEmitter;
@@ -50,6 +57,7 @@ export class HordeBench extends BenchScene {
   protected setup() {
     const { width, height } = this.scale;
     this.gems = [];
+    this.jewelLights = 0;
 
     addGradientBackground(this, '#1a0f2e', '#06040c');
 
@@ -116,9 +124,7 @@ export class HordeBench extends BenchScene {
       const b = boltObj as ArcadeImage;
       if (!e.active || !b.active) return;
       this.hitBurst.explode(14, e.x, e.y);
-      if (Math.random() < 0.3) {
-        this.gems.push(this.add.image(e.x, e.y, 'star').setTint(0x66ffcc).setScale(0.5).setDepth(12));
-      }
+      if (Math.random() < 0.3) this.spawnJewel(e.x, e.y);
       e.destroy();
       b.destroy();
     });
@@ -171,6 +177,22 @@ export class HordeBench extends BenchScene {
     this.hitBurst.explode(4, px, py); // muzzle flash
   }
 
+  // An XP jewel: a normal-mapped, lit gem sprite that ALSO carries its own light
+  // (capped), so it sparkles under the scene lights and lights up the spiders it
+  // drifts past — showcasing the same lighting the spiders use.
+  private spawnJewel(x: number, y: number) {
+    const col = JEWEL_COLORS[Phaser.Math.Between(0, JEWEL_COLORS.length - 1)]!;
+    const sprite = this.add.image(x, y, 'jewel').setTint(col).setScale(0.6).setDepth(12);
+    sprite.setLighting(true);
+    sprite.setSelfShadow(true);
+    let light: GameObjects.Light | null = null;
+    if (this.jewelLights < MAX_JEWEL_LIGHTS) {
+      light = this.lights.addLight(x, y, 110, col, 2.2);
+      this.jewelLights++;
+    }
+    this.gems.push({ sprite, light });
+  }
+
   protected override onUpdate(delta: number) {
     const dt = delta / 1000;
     const px = this.player.x;
@@ -204,18 +226,29 @@ export class HordeBench extends BenchScene {
       this.trail.emitParticleAt(b.x, b.y, 1);
     }
 
-    // XP gems drift to the player and sparkle on pickup.
+    // XP jewels drift to the player (their light rides along), spinning so the
+    // facets sparkle, and pop on pickup.
     const gemSpeed = 380 * dt;
     for (let i = this.gems.length - 1; i >= 0; i--) {
       const g = this.gems[i]!;
-      const dx = px - g.x;
-      const dy = py - g.y;
+      const s = g.sprite;
+      const dx = px - s.x;
+      const dy = py - s.y;
       const d = Math.hypot(dx, dy) || 1;
-      g.x += (dx / d) * gemSpeed;
-      g.y += (dy / d) * gemSpeed;
+      s.x += (dx / d) * gemSpeed;
+      s.y += (dy / d) * gemSpeed;
+      s.rotation += dt * 2;
+      if (g.light) {
+        g.light.x = s.x;
+        g.light.y = s.y;
+      }
       if (d < 24) {
-        this.hitBurst.explode(5, g.x, g.y);
-        g.destroy();
+        this.hitBurst.explode(6, s.x, s.y);
+        s.destroy();
+        if (g.light) {
+          this.lights.removeLight(g.light);
+          this.jewelLights--;
+        }
         this.gems.splice(i, 1);
       }
     }
@@ -224,6 +257,10 @@ export class HordeBench extends BenchScene {
   override shutdown() {
     super.shutdown();
     this.fireEvent?.remove();
+    for (const g of this.gems) {
+      if (g.light) this.lights.removeLight(g.light);
+    }
     this.gems = [];
+    this.jewelLights = 0;
   }
 }
