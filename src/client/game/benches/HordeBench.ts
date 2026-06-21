@@ -82,6 +82,8 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
   // Difficulty ramp + named elites/bosses.
   private runTime = 0;
   private specials: Special[] = [];
+  private spawnAccum = 0; // fps-independent swarm top-up timer
+  private introActive = false; // a boss/elite entrance cinematic is playing
 
   // UpgradeTarget — mutable player stats, changed by chosen upgrade cards.
   damage = 1;
@@ -115,7 +117,7 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
   constructor() {
     super({ key: 'HordeBench', physics: { arcade: { debug: false } } });
     this.targetFps = 50;
-    this.stepSize = 40;
+    this.stepSize = 10; // gentle: the swarm is capped (swarmCap), topped up in onUpdate
     this.maxCount = 20_000;
   }
 
@@ -225,6 +227,8 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     // Difficulty ramp + named foes. Elites arrive periodically, bosses rarely;
     // both scale with elapsed run time.
     this.runTime = 0;
+    this.spawnAccum = 0;
+    this.introActive = false;
     this.specials = [];
     this.time.addEvent({ delay: 17000, loop: true, callback: () => this.spawnElite() });
     this.time.addEvent({ delay: 58000, loop: true, callback: () => this.spawnBoss() });
@@ -235,29 +239,34 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     return Math.floor(this.runTime / 22000);
   }
 
-  protected addObjects(n: number) {
+  // Live swarm cap: modest at the start, grows slowly with the tier. Keeps the
+  // game from being overwhelmed (the bench harness would otherwise spawn forever).
+  private swarmCap() {
+    return Math.min(100, 38 + this.tier() * 6);
+  }
+
+  // Spawn one spider at the edge ring, scaled in strength by the current tier.
+  private spawnSpider() {
     const { width, height } = this.scale;
-    const cx = width / 2;
-    const cy = height / 2;
     const ring = Math.hypot(width, height) / 2 + 40;
     const t = this.tier();
-    for (let i = 0; i < n; i++) {
-      const a = Phaser.Math.FloatBetween(0, Math.PI * 2);
-      const e = this.enemies.create(
-        cx + Math.cos(a) * ring,
-        cy + Math.sin(a) * ring,
-        'spider'
-      ) as ArcadeImage;
-      const sc = Phaser.Math.FloatBetween(0.08, 0.14);
-      e.setScale(sc).setDepth(10);
-      e.setLighting(true);
-      e.setSelfShadow(true);
-      // Strength scales with the run: tougher + faster spiders over time.
-      e.setData('speed', Phaser.Math.Between(35, 80) + t * 6);
-      e.setData('hp', 2 + t);
-      e.setData('bs', sc);
-      e.setData('ph', Phaser.Math.FloatBetween(0, 6.28));
-    }
+    const a = Phaser.Math.FloatBetween(0, Math.PI * 2);
+    const e = this.enemies.create(width / 2 + Math.cos(a) * ring, height / 2 + Math.sin(a) * ring, 'spider') as ArcadeImage;
+    const sc = Phaser.Math.FloatBetween(0.08, 0.14);
+    e.setScale(sc).setDepth(10);
+    e.setLighting(true);
+    e.setSelfShadow(true);
+    e.setData('speed', Phaser.Math.Between(35, 80) + t * 6);
+    e.setData('hp', 2 + t);
+    e.setData('bs', sc);
+    e.setData('ph', Phaser.Math.FloatBetween(0, 6.28));
+  }
+
+  // Top up the swarm toward the cap (never past it), so the count stays sane.
+  protected addObjects(n: number) {
+    const room = this.swarmCap() - this.enemies.getLength();
+    const k = Math.max(0, Math.min(n, room));
+    for (let i = 0; i < k; i++) this.spawnSpider();
   }
 
   // Resolve a hit on a spider (WeaponHost): damage number, physics knockback
@@ -466,7 +475,7 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
     isBoss: boolean;
   }) {
     const { width, height } = this.scale;
-    const ring = Math.hypot(width, height) / 2 + 60;
+    const ring = Math.min(width, height) / 2 + 50; // just off the nearest edge
     const a = Phaser.Math.FloatBetween(0, Math.PI * 2);
     const x = width / 2 + Math.cos(a) * ring;
     const y = height / 2 + Math.sin(a) * ring;
@@ -505,6 +514,37 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
 
     this.specials.push({ sprite: e, label, bar, aura, maxHp: opts.hp, isBoss: opts.isBoss, w: opts.isBoss ? 90 : 50 });
     if (opts.isBoss) this.announceBoss(opts.name);
+    this.specialIntro(e, opts.isBoss);
+  }
+
+  // Entrance cinematic: dim the arena to a dramatic low, spotlight the foe, and
+  // pan + zoom the camera onto it, then ease everything back.
+  private specialIntro(e: ArcadeImage, isBoss: boolean) {
+    if (this.introActive) return; // don't stack cinematics
+    this.introActive = true;
+    const { width, height } = this.scale;
+    const cam = this.cameras.main;
+    this.dimLights(true);
+    const spot = this.add
+      .pointlight(e.x, e.y, isBoss ? 0xff3366 : 0xff7744, isBoss ? 240 : 170, isBoss ? 2.4 : 1.7)
+      .setDepth(8);
+    cam.pan(e.x, e.y, 300, 'Sine.easeInOut');
+    cam.zoomTo(isBoss ? 1.6 : 1.35, 300, 'Sine.easeInOut');
+    this.time.delayedCall(300 + (isBoss ? 850 : 480), () => {
+      cam.pan(width / 2, height / 2, 340, 'Sine.easeInOut');
+      cam.zoomTo(1, 340, 'Sine.easeInOut');
+      this.dimLights(false);
+      this.tweens.add({ targets: spot, intensity: 0, duration: 340, onComplete: () => spot.destroy() });
+      this.time.delayedCall(360, () => (this.introActive = false));
+    });
+  }
+
+  // Tween the arena edge lights down to a dramatic low (on) or back to normal.
+  private dimLights(on: boolean) {
+    this.edgeLights.forEach((l, i) => {
+      const base = i === 3 ? 1.3 : 1;
+      this.tweens.add({ targets: l, intensity: on ? base * 0.18 : base, duration: 280 });
+    });
   }
 
   private spawnElite() {
@@ -625,6 +665,13 @@ export class HordeBench extends BenchScene implements WeaponHost, ApplyHost, Gam
       if (this.hitstopT > 0) return;
     }
     this.runTime += delta; // drives the difficulty ramp
+    // Top the swarm up toward the cap independent of FPS (the bench ramp stops
+    // adding once FPS dips; the game should keep a steady swarm regardless).
+    this.spawnAccum += delta;
+    if (this.spawnAccum >= 550) {
+      this.spawnAccum = 0;
+      this.addObjects(5);
+    }
     const dt = (delta / 1000) * this.slowScale;
     const nowSec = this.time.now / 1000;
     const px = this.player.x;
