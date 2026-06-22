@@ -18,6 +18,27 @@ import { BENCHES } from '../game/benches/registry';
 import type { LeaderboardEntry } from '../../shared/api';
 
 const BENCH_KEYS = new Set(BENCHES.map((b) => b.sceneKey));
+const ID_TO_KEY = new Map(BENCHES.map((b) => [b.benchId, b.sceneKey] as const));
+const KEY_TO_ID = new Map(BENCHES.map((b) => [b.sceneKey, b.benchId] as const));
+
+// Shareable deep links: ?scene=<benchId> opens that scene on load, and the URL is
+// kept in sync as you switch scenes so the current URL is always shareable.
+function readSceneParam(): string | null {
+  return new URLSearchParams(window.location.search).get('scene');
+}
+function paramToSceneKey(param: string | null): string | null {
+  if (!param) return null;
+  if (ID_TO_KEY.has(param)) return ID_TO_KEY.get(param)!;
+  return BENCH_KEYS.has(param) ? param : null; // also accept a raw sceneKey
+}
+function syncSceneUrl(sceneKey: string) {
+  const id = KEY_TO_ID.get(sceneKey);
+  const params = new URLSearchParams(window.location.search);
+  if (id) params.set('scene', id);
+  else params.delete('scene');
+  const qs = params.toString();
+  window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`);
+}
 
 // Top-level HUD shell. Mounts Phaser, relays React<->scene control, and renders
 // the perf HUD, bench bar, and leaderboard over the canvas.
@@ -27,6 +48,8 @@ export function App() {
   const [perf, setPerf] = useState<BenchPerfPayload | null>(null);
   const [done, setDone] = useState<{ capacity: number } | null>(null);
   const [collapsed, setCollapsed] = useState(false);
+  const deepLinkTarget = useRef<string | null>(paramToSceneKey(readSceneParam()));
+  const deepLinkApplied = useRef(false);
 
   const [username, setUsername] = useState<string | null>(null);
   const [bestScore, setBestScore] = useState(0);
@@ -98,19 +121,39 @@ export function App() {
     };
   }, [refreshLeaderboard]);
 
-  const onSceneReady = useCallback((scene: Scene) => {
-    setActiveSceneKey(scene.scene.key);
-  }, []);
-
   const switchScene = useCallback((target: string) => {
     const game = phaserRef.current?.game;
     if (!game) return;
-    const current = phaserRef.current?.scene?.scene.key;
-    if (current && current !== target) game.scene.stop(current);
+    // stop every running user-facing scene except the target (robust even when the
+    // active-scene ref hasn't caught up yet, e.g. during a deep-link switch at boot)
+    for (const s of game.scene.getScenes(true)) {
+      if (s.scene.key !== target) game.scene.stop(s.scene.key);
+    }
     setPerf(null);
     setDone(null);
     game.scene.start(target);
   }, []);
+
+  const onSceneReady = useCallback(
+    (scene: Scene) => {
+      const key = scene.scene.key;
+      setActiveSceneKey(key);
+      // Apply the ?scene= deep link once the home scene is ready (boot + loader fully
+      // settled), so a deep-linked switch behaves exactly like a sidebar selection.
+      if (!deepLinkApplied.current && key === HOME_SCENE_KEY) {
+        deepLinkApplied.current = true;
+        const target = deepLinkTarget.current;
+        if (target && target !== key) {
+          // defer one tick so the home scene finishes create() and is fully running
+          // before we stop it — otherwise the stop races create() and it lingers
+          setTimeout(() => switchScene(target), 0);
+          return; // the resulting scene's onSceneReady will sync the URL
+        }
+      }
+      syncSceneUrl(key);
+    },
+    [switchScene]
+  );
 
   const isBench = activeSceneKey !== null && BENCH_KEYS.has(activeSceneKey);
 
