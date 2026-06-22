@@ -1,7 +1,8 @@
 import * as Phaser from 'phaser';
 import { Scene, GameObjects } from 'phaser';
-import { type Upgrade, RARITY_COLOR, RARITY_EDITION } from '../upgrades';
-import { SWIRL_FRAG, EDITION_FRAG } from '../lib/cardShaders';
+import { type Upgrade, RARITY_COLOR } from '../upgrades';
+import { SWIRL_FRAG } from '../lib/cardShaders';
+import { preloadHoloCards, HOLO_CARD_SLUGS } from '../lib/holoCard';
 
 // The level-up overlay. The game keeps running underneath in bullet-time (not
 // paused); this draws a swirl-backed card tray along the BOTTOM of the screen,
@@ -13,7 +14,7 @@ type CardSelectData = { choices: Upgrade[]; onPick: (u: Upgrade) => void };
 type Card = {
   upgrade: Upgrade;
   root: GameObjects.Container;
-  edition: GameObjects.Shader | null;
+  foil: GameObjects.Image; // additive holo-mask pass; hue/strength shift with tilt
   baseX: number;
   baseY: number;
   scale: number;
@@ -22,6 +23,31 @@ type Card = {
   ready: boolean;
   wasOver: boolean;
 };
+
+// Each upgrade maps to the themed holo card art that fits it.
+const UPGRADE_ART: Record<string, string> = {
+  'w-bolt': 'plasma-bolt',
+  'w-orbit': 'orbit',
+  'w-nova': 'nova-blast',
+  'w-ricochet': 'ricochet',
+  'w-singularity': 'singularity',
+  'syn-orbital-nova': 'orbital-nova',
+  fangs: 'power-core',
+  overcharge: 'power-core',
+  glasscannon: 'power-core',
+  bigbang: 'nova-blast',
+  rapid: 'overclock',
+  velocity: 'overclock',
+  crit: 'critical-eye',
+  greed: 'plunder',
+};
+
+function slugFor(up: Upgrade): string {
+  if (UPGRADE_ART[up.id]) return UPGRADE_ART[up.id]!;
+  let h = 0;
+  for (let i = 0; i < up.id.length; i++) h = (h * 31 + up.id.charCodeAt(i)) | 0;
+  return HOLO_CARD_SLUGS[Math.abs(h) % HOLO_CARD_SLUGS.length]!;
+}
 
 const CARD_W = 188;
 const CARD_H = 240;
@@ -32,9 +58,14 @@ export class CardSelect extends Scene {
   private bg!: GameObjects.Shader;
   private sparkle!: GameObjects.Particles.ParticleEmitter;
   private picked = false;
+  private cardLight!: GameObjects.Light;
 
   constructor() {
     super('CardSelect');
+  }
+
+  preload() {
+    preloadHoloCards(this);
   }
 
   init(data: CardSelectData) {
@@ -46,6 +77,12 @@ export class CardSelect extends Scene {
   create() {
     const { width, height } = this.scale;
     const n = this.payload.choices.length;
+
+    // Light2D so the holo card art shows real normal-mapped emboss; a single
+    // light tracks the cursor so the relief shifts as you hover the tray.
+    this.lights.enable();
+    this.lights.setAmbientColor(0x6e6e78);
+    this.cardLight = this.lights.addLight(width / 2, height * 0.72, 560, 0xffffff, 1.5).setZNormal(0.5);
 
     // Responsive bottom tray: scale cards so `n` fit the width and the tray height.
     const bandH = Math.min(height * 0.46, CARD_H + 64);
@@ -140,62 +177,60 @@ export class CardSelect extends Scene {
       extras.push(glow);
     }
 
-    const panel = this.add.graphics();
-    panel.fillStyle(0x141018, 0.96);
-    panel.fillRoundedRect(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H, 12);
-    panel.lineStyle(3, color, 1);
-    panel.strokeRoundedRect(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H, 12);
+    // holo card face: normal-mapped art (lit by the cursor light) + additive foil
+    const slug = slugFor(up);
+    const art = this.add.image(0, 0, `holo:${slug}`).setDisplaySize(CARD_W, CARD_H);
+    art.setLighting(true);
+    const foil = this.add
+      .image(0, 0, `holomask:${slug}`)
+      .setDisplaySize(CARD_W, CARD_H)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setAlpha(0);
+
+    const frame = this.add.graphics();
+    frame.lineStyle(3, color, 1);
+    frame.strokeRoundedRect(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H, 12);
+
+    // readable tray for the upgrade name + description, over the lower third
+    const trayH = CARD_H * 0.34;
+    const trayY = CARD_H / 2 - trayH / 2 - 7;
+    const tray = this.add.graphics();
+    tray.fillStyle(0x0a0810, 0.82);
+    tray.fillRoundedRect(-CARD_W / 2 + 8, trayY - trayH / 2, CARD_W - 16, trayH, 8);
 
     const rarityLabel = this.add
-      .text(0, -CARD_H / 2 + 14, up.rarity.toUpperCase(), {
+      .text(0, -CARD_H / 2 + 12, up.rarity.toUpperCase(), {
         fontFamily: 'Arial Black',
-        fontSize: 12,
+        fontSize: 11,
         color: Phaser.Display.Color.IntegerToColor(color).rgba,
+        stroke: '#000',
+        strokeThickness: 3,
       })
       .setOrigin(0.5);
-
-    const iconObjs = this.buildIcon(up, -CARD_H * 0.22);
 
     const name = this.add
-      .text(0, CARD_H * 0.04, up.name, {
+      .text(0, trayY - trayH / 2 + 16, up.name, {
         fontFamily: 'Arial Black',
-        fontSize: 18,
+        fontSize: 15,
         color: '#ffffff',
         align: 'center',
-        wordWrap: { width: CARD_W - 24 },
-      })
-      .setOrigin(0.5);
-
-    const desc = this.add
-      .text(0, CARD_H * 0.24, up.desc, {
-        fontFamily: 'Arial',
-        fontSize: 14,
-        color: '#cfd6e0',
-        align: 'center',
+        stroke: '#000',
+        strokeThickness: 3,
         wordWrap: { width: CARD_W - 28 },
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5, 0.5);
 
-    root.add([shadow, ...extras, panel, ...iconObjs, rarityLabel, name, desc]);
+    const desc = this.add
+      .text(0, trayY + 4, up.desc, {
+        fontFamily: 'Arial',
+        fontSize: 12,
+        color: '#cfd6e0',
+        align: 'center',
+        wordWrap: { width: CARD_W - 30 },
+      })
+      .setOrigin(0.5, 0);
 
-    let edition: GameObjects.Shader | null = null;
-    const mode = RARITY_EDITION[up.rarity];
-    if (mode >= 0) {
-      edition = this.add
-        .shader(
-          {
-            name: `edition-${up.id}`,
-            fragmentSource: EDITION_FRAG,
-            initialUniforms: { uTime: 0, uMode: mode, uTilt: [0, 0] },
-          },
-          x,
-          y,
-          CARD_W - 14,
-          CARD_H - 14
-        )
-        .setBlendMode(Phaser.BlendModes.ADD)
-        .setDepth(2);
-    }
+    root.add([shadow, ...extras, art, foil, frame, tray, rarityLabel, name, desc]);
 
     root.setInteractive(
       new Phaser.Geom.Rectangle(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H),
@@ -204,7 +239,7 @@ export class CardSelect extends Scene {
     const card: Card = {
       upgrade: up,
       root,
-      edition,
+      foil,
       baseX: x,
       baseY: y,
       scale: cardScale,
@@ -215,114 +250,6 @@ export class CardSelect extends Scene {
     };
     root.on('pointerdown', () => this.pick(card));
     return card;
-  }
-
-  // Which animated icon a card shows (weapons preview their effect).
-  private fxKind(up: Upgrade): string {
-    const map: Record<string, string> = {
-      'w-bolt': 'bolt',
-      'w-orbit': 'orbit',
-      'w-nova': 'nova',
-      'w-singularity': 'singularity',
-      'w-ricochet': 'ricochet',
-      'syn-orbital-nova': 'orbit',
-    };
-    return map[up.id] ?? (up.icon.tex === 'star' ? 'spin' : 'pulse');
-  }
-
-  // Build a small ANIMATED icon for a card: weapons preview their motion (orbiting
-  // orbs, an expanding nova ring, a collapsing singularity, a bouncing ricochet,
-  // a firing bolt); passives spin or pulse. Returns the objects to add to the card.
-  private buildIcon(up: Upgrade, iy: number): GameObjects.GameObject[] {
-    const tint = up.icon.tint;
-    const ADD = Phaser.BlendModes.ADD;
-    const objs: GameObjects.GameObject[] = [];
-
-    const glow = this.add.image(0, iy, 'glow').setTint(tint).setBlendMode(ADD).setScale(1.1).setAlpha(0.55);
-    this.tweens.add({ targets: glow, scale: 1.45, alpha: 0.28, duration: 1000, yoyo: true, repeat: -1 });
-    objs.push(glow);
-
-    switch (this.fxKind(up)) {
-      case 'orbit': {
-        objs.push(this.add.image(0, iy, 'ball').setTint(tint).setBlendMode(ADD).setScale(0.7));
-        const orbs = [0, 1, 2].map(() => this.add.image(0, iy, 'dot').setTint(tint).setBlendMode(ADD).setScale(0.7));
-        objs.push(...orbs);
-        this.tweens.addCounter({
-          from: 0,
-          to: Math.PI * 2,
-          duration: 1700,
-          repeat: -1,
-          onUpdate: (t) => {
-            const a = t.getValue() ?? 0;
-            orbs.forEach((o, i) => o.setPosition(Math.cos(a + i * 2.094) * 18, iy + Math.sin(a + i * 2.094) * 18));
-          },
-        });
-        break;
-      }
-      case 'nova': {
-        objs.push(this.add.image(0, iy, 'glow').setTint(tint).setBlendMode(ADD).setScale(0.45));
-        const r = this.add.image(0, iy, 'ring').setTint(tint).setBlendMode(ADD).setScale(0.2);
-        objs.push(r);
-        this.tweens.add({
-          targets: r,
-          scale: 1.3,
-          alpha: { from: 1, to: 0 },
-          duration: 1100,
-          repeat: -1,
-          onRepeat: () => r.setScale(0.2).setAlpha(1),
-        });
-        break;
-      }
-      case 'singularity': {
-        const r = this.add.image(0, iy, 'ring').setTint(tint).setBlendMode(ADD).setScale(1.3);
-        const core = this.add.image(0, iy, 'glow').setTint(tint).setBlendMode(ADD).setScale(0.4);
-        objs.push(r, core);
-        this.tweens.add({
-          targets: r,
-          scale: 0.3,
-          angle: 360,
-          alpha: { from: 0.3, to: 1 },
-          duration: 1200,
-          repeat: -1,
-          onRepeat: () => r.setScale(1.3).setAngle(0).setAlpha(0.3),
-        });
-        this.tweens.add({ targets: core, scale: 0.7, duration: 700, yoyo: true, repeat: -1 });
-        break;
-      }
-      case 'ricochet': {
-        const dot = this.add.image(0, iy, 'ring').setTint(tint).setBlendMode(ADD).setScale(0.55);
-        objs.push(dot);
-        this.tweens.add({ targets: dot, x: 20, duration: 420, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-        this.tweens.add({ targets: dot, y: iy - 14, duration: 300, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-        break;
-      }
-      case 'bolt': {
-        objs.push(this.add.image(0, iy, up.icon.tex).setTint(tint).setBlendMode(ADD).setScale(1.3));
-        const shot = this.add.image(0, iy, 'dot').setTint(0xffffff).setBlendMode(ADD).setScale(0.6);
-        objs.push(shot);
-        this.tweens.add({
-          targets: shot,
-          y: iy - 26,
-          alpha: { from: 1, to: 0 },
-          duration: 460,
-          repeat: -1,
-          onRepeat: () => shot.setPosition(0, iy).setAlpha(1),
-        });
-        break;
-      }
-      case 'spin': {
-        const core = this.add.image(0, iy, up.icon.tex).setTint(tint).setScale(1.5);
-        objs.push(core);
-        this.tweens.add({ targets: core, angle: 360, duration: 2600, repeat: -1 });
-        break;
-      }
-      default: {
-        const core = this.add.image(0, iy, up.icon.tex).setTint(tint).setScale(1.4);
-        objs.push(core);
-        this.tweens.add({ targets: core, scale: 1.65, duration: 620, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-      }
-    }
-    return objs;
   }
 
   private pick(card: Card) {
@@ -346,10 +273,10 @@ export class CardSelect extends Scene {
     if (this.picked) return;
 
     const p = this.input.activePointer;
+    this.cardLight.x = p.x;
+    this.cardLight.y = p.y;
+
     for (const card of this.cards) {
-      if (card.edition) {
-        card.edition.setUniform('uTime', t);
-      }
       if (!card.ready) continue;
 
       const halfW = (CARD_W * card.scale) / 2;
@@ -358,10 +285,8 @@ export class CardSelect extends Scene {
       card.hover = Phaser.Math.Linear(card.hover, over ? 1 : 0, 0.18);
 
       let tiltX = 0;
-      let tiltY = 0;
       if (over) {
         tiltX = Phaser.Math.Clamp((p.x - card.baseX) / halfW, -1, 1);
-        tiltY = Phaser.Math.Clamp((p.y - card.baseY) / halfH, -1, 1);
         if (!card.wasOver) this.sparkle.explode(8, card.baseX, card.baseY);
       }
       card.wasOver = over;
@@ -371,12 +296,11 @@ export class CardSelect extends Scene {
       card.root.setScale(card.scale * (1 + 0.1 * card.hover));
       card.root.y = card.baseY - 22 * card.hover;
 
-      if (card.edition) {
-        card.edition.setUniform('uTilt', [tiltX, tiltY]);
-        card.edition.setPosition(card.root.x, card.root.y);
-        card.edition.rotation = card.root.rotation;
-        card.edition.setScale(card.root.scaleX);
-      }
+      // foil shimmer — hue drifts with time + tilt, brighter on hover
+      const hue = (t * 0.05 + tiltX * 0.22 + 0.5 + card.phase * 0.05) % 1;
+      const col = Phaser.Display.Color.HSVToRGB(hue, 0.65, 1) as Phaser.Types.Display.ColorObject;
+      card.foil.setTint(col.color ?? Phaser.Display.Color.GetColor(col.r, col.g, col.b));
+      card.foil.setAlpha(0.16 + 0.5 * card.hover + 0.1 * Math.sin(t * 2 + card.phase));
     }
   }
 }

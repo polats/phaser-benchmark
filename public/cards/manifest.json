@@ -1,0 +1,52 @@
+[
+  {
+    "slug": "plasma-bolt",
+    "name": "Plasma Bolt",
+    "rarity": "common"
+  },
+  {
+    "slug": "orbit",
+    "name": "Orbit",
+    "rarity": "rare"
+  },
+  {
+    "slug": "nova-blast",
+    "name": "Nova Blast",
+    "rarity": "epic"
+  },
+  {
+    "slug": "ricochet",
+    "name": "Ricochet",
+    "rarity": "rare"
+  },
+  {
+    "slug": "singularity",
+    "name": "Singularity",
+    "rarity": "legendary"
+  },
+  {
+    "slug": "orbital-nova",
+    "name": "Orbital Nova",
+    "rarity": "legendary"
+  },
+  {
+    "slug": "power-core",
+    "name": "Power Core",
+    "rarity": "epic"
+  },
+  {
+    "slug": "overclock",
+    "name": "Overclock",
+    "rarity": "common"
+  },
+  {
+    "slug": "critical-eye",
+    "name": "Critical Eye",
+    "rarity": "rare"
+  },
+  {
+    "slug": "plunder",
+    "name": "Plunder",
+    "rarity": "common"
+  }
+]

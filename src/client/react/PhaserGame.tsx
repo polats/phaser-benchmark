@@ -39,6 +39,9 @@ export const PhaserGame = forwardRef<PhaserGameHandle, Props>(function PhaserGam
   useLayoutEffect(() => {
     if (gameRef.current === null) {
       gameRef.current = StartGame('game-container');
+      if ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV) {
+        (window as Window & { __game?: unknown }).__game = gameRef.current;
+      }
     }
     return () => {
       gameRef.current?.destroy(true);

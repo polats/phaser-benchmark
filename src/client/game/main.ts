@@ -17,6 +17,7 @@ import { ParticlesBench } from './benches/ParticlesBench';
 import { RopeBench } from './benches/RopeBench';
 import { TilemapBench } from './benches/TilemapBench';
 import { HordeBench } from './benches/HordeBench';
+import { HoloCardsBench } from './benches/HoloCardsBench';
 import { BigForestScene } from './demos/bigForest';
 import { CreepyCrawlyDemo } from './demos/CreepyCrawlyDemo';
 import { GpuAnimatedDemo } from './demos/GpuAnimatedDemo';
@@ -65,6 +66,7 @@ const config: Types.Core.GameConfig = {
     MatterBench,
     Box2dBench,
     HordeBench,
+    HoloCardsBench,
     BigForestScene,
     CreepyCrawlyDemo,
     GpuAnimatedDemo,

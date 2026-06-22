@@ -35,6 +35,13 @@ export const BENCHES: BenchInfo[] = [
     group: 'render',
   },
   {
+    sceneKey: 'HoloCardsBench',
+    benchId: 'holo-cards',
+    label: 'Holo Cards',
+    description: 'Holographic trading cards — normal-map emboss under a pointer light + additive foil.',
+    group: 'render',
+  },
+  {
     sceneKey: 'TextBench',
     benchId: 'text',
     label: 'Text',
