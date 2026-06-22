@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Scene } from 'phaser';
 import { PhaserGame, type PhaserGameHandle } from './PhaserGame';
-import { PerfHud } from './components/PerfHud';
-import { BenchMenu } from './components/BenchMenu';
+import { Sidebar } from './components/Sidebar';
 import { BenchControls } from './components/BenchControls';
 import { Leaderboard } from './components/Leaderboard';
 import { EventBus } from '../game/EventBus';
@@ -27,6 +26,7 @@ export function App() {
   const [activeSceneKey, setActiveSceneKey] = useState<string | null>(null);
   const [perf, setPerf] = useState<BenchPerfPayload | null>(null);
   const [done, setDone] = useState<{ capacity: number } | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
 
   const [username, setUsername] = useState<string | null>(null);
   const [bestScore, setBestScore] = useState(0);
@@ -114,16 +114,34 @@ export function App() {
 
   const isBench = activeSceneKey !== null && BENCH_KEYS.has(activeSceneKey);
 
+  const onRestart = useCallback(() => {
+    if (activeSceneKey) switchScene(activeSceneKey);
+  }, [activeSceneKey, switchScene]);
+
   return (
     <>
       <PhaserGame ref={phaserRef} onSceneReady={onSceneReady} />
-      <div className="hud">
-        <BenchMenu
+      <div className={collapsed ? 'hud sidebar-collapsed' : 'hud'}>
+        <Sidebar
           activeKey={activeSceneKey}
+          isBench={isBench}
+          perf={perf}
+          done={done}
           onSelect={switchScene}
           onHome={() => switchScene(HOME_SCENE_KEY)}
+          onRestart={onRestart}
+          onToggle={() => setCollapsed(true)}
         />
-        {isBench ? <PerfHud perf={perf} done={done} /> : null}
+        {collapsed ? (
+          <button type="button" className="sidebar-open panel" onClick={() => setCollapsed(false)}>
+            ☰{' '}
+            {isBench && perf ? (
+              <span className="sidebar-open-fps">{perf.fps.toFixed(0)} fps</span>
+            ) : (
+              'benches'
+            )}
+          </button>
+        ) : null}
         <BenchControls activeKey={activeSceneKey} />
         {!isBench ? (
           <Leaderboard entries={entries} username={username} bestScore={bestScore} />

@@ -58,44 +58,177 @@ body,
   user-select: text;
 }
 
-.perf {
+/* ---- Dismissable left sidebar (mobile-first scene picker + run status) ---- */
+.sidebar {
   position: absolute;
-  top: 8px;
-  left: 8px;
-  padding: 6px 10px;
-  font:
-    12px/1.4 ui-monospace,
-    monospace;
-  background: rgba(0, 0, 0, 0.55);
-  border-radius: 6px;
-  white-space: pre;
-}
-
-.bench-bar {
-  position: absolute;
-  top: 8px;
-  right: 8px;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: min(264px, 82vw);
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  max-width: 60%;
-  justify-content: flex-end;
+  flex-direction: column;
+  padding: 14px;
+  box-sizing: border-box;
+  background: rgba(9, 12, 20, 0.86);
+  backdrop-filter: blur(12px);
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+  z-index: 20;
+  overflow: hidden;
+  transition: transform 0.2s ease;
 }
-
-.bench-bar button {
-  padding: 6px 10px;
-  font-size: 12px;
+.sidebar-collapsed .sidebar {
+  transform: translateX(-100%);
+}
+.sidebar-title {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  padding-bottom: 10px;
+  margin-bottom: 6px;
+}
+.sidebar-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.sidebar-title strong {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+.sidebar-title p {
+  margin: 6px 0 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8b93a7;
+}
+.sidebar-collapse {
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 7px;
+  background: transparent;
+  color: #cfd6e0;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.sidebar-collapse:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+.sidebar-nav {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.sidebar-section h2 {
+  margin: 14px 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #ffd166;
+}
+.sidebar-section ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.sidebar-link {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px 10px;
+  margin: 2px 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #cfd6e0;
+  font-size: 14px;
   font-weight: 600;
-  color: #0b1020;
-  background: #ffd166;
-  border: none;
-  border-radius: 6px;
   cursor: pointer;
 }
-
-.bench-bar button.secondary {
-  color: #f2f2f2;
-  background: rgba(255, 255, 255, 0.15);
+.sidebar-link:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #fff;
+}
+.sidebar-link.active {
+  color: #1b1300;
+  background: linear-gradient(180deg, #ffe08a, #ffd166);
+}
+.sidebar-status {
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  padding-top: 10px;
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.status-head {
+  font-weight: 800;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.status-row {
+  font-size: 13px;
+  color: #b9c0cf;
+}
+.status-fps {
+  font-size: 20px;
+  font-weight: 800;
+  color: #ffd166;
+}
+.status-row.ramp {
+  color: #ffd166;
+}
+.status-row.done {
+  color: #7cfc9b;
+  font-weight: 700;
+}
+.sidebar-action {
+  width: 100%;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  background: transparent;
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sidebar-action:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-style: solid;
+}
+.sidebar-open {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  z-index: 21;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 9px;
+  background: rgba(9, 12, 20, 0.82);
+  backdrop-filter: blur(8px);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sidebar-open:hover {
+  border-color: rgba(255, 255, 255, 0.35);
+}
+.sidebar-open-fps {
+  font-size: 13px;
+  font-weight: 800;
+  color: #ffd166;
 }
 
 /* Per-scene tuning panel (filter toggles / shader picker). Sits bottom-centre so
@@ -150,12 +283,13 @@ body,
 .leaderboard {
   position: absolute;
   bottom: 8px;
-  left: 8px;
+  right: 8px;
   padding: 8px 12px;
   font-size: 12px;
   background: rgba(0, 0, 0, 0.55);
   border-radius: 6px;
   min-width: 160px;
+  max-width: 50vw;
 }
 
 .leaderboard h3 {
