@@ -71,6 +71,13 @@ export const BENCHES: BenchInfo[] = [
     group: 'render',
   },
   {
+    sceneKey: 'TilemapBench',
+    benchId: 'tilemap',
+    label: 'Tilemap',
+    description: 'Phaser 4 GPU tilemap layers (one shader quad each) — ramp stacked parallax layers.',
+    group: 'render',
+  },
+  {
     sceneKey: 'ShaderDemo',
     benchId: 'demo-shader',
     label: '✨ Shader',
